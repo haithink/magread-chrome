@@ -124,6 +124,7 @@
           return;
         }
         openPanel(article);
+        if (state.digest || state.vocab) renderAll(article); // 已有数据：立即渲染，不等网络
         await refreshCache(article);
         await renderAll(article);
       } catch (e) {
@@ -451,6 +452,10 @@
 
   function openPanel(article) {
     ensurePanel();
+    const body = panel.querySelector(".kandu-panel-body");
+    if (body && !body.children.length) {
+      body.appendChild(el("div", "kandu-loading", "正在加载…（若长时间无内容，点工具栏图标查看日志）"));
+    }
     renderAll(article);
   }
 

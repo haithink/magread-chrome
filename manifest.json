@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "刊读助手",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "英文网页文章阅读辅助：LLM 摘要、逐段生词表、双击/选中句解（与刊读桌面版同源能力）",
   "permissions": ["storage"],
   "host_permissions": ["<all_urls>"],
