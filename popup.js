@@ -178,6 +178,24 @@ function parsePasted(text) {
     model: m ? m.value : "",
   };
 }
+$("bLogs").addEventListener("click", async () => {
+  const r = await chrome.runtime.sendMessage({ type: "getLogs" });
+  const box = $("logBox");
+  box.style.display = "block";
+  box.textContent = (r.logs || []).slice().reverse().join("\n") || "（暂无日志）";
+});
+$("bCopyLogs").addEventListener("click", async () => {
+  const r = await chrome.runtime.sendMessage({ type: "getLogs" });
+  const text = (r.logs || []).slice().reverse().join("\n");
+  try { await navigator.clipboard.writeText(text); setStatus("日志已复制到剪贴板"); }
+  catch { $("logBox").style.display = "block"; $("logBox").textContent = text; setStatus("复制失败，日志已显示在下方，请手动选择复制"); }
+});
+$("bClearLogs").addEventListener("click", async () => {
+  await chrome.runtime.sendMessage({ type: "clearLogs" });
+  $("logBox").textContent = "";
+  setStatus("日志已清空");
+});
+
 function keyPriority(k) {
   const kl = k.toLowerCase();
   if (/anthropic_base_url|openai_base_url/.test(kl)) return ["url", 100];

@@ -9,6 +9,16 @@ async function stGet(keys) {
 async function stSet(obj) {
   return new Promise((res) => chrome.storage.local.set(obj, () => res()));
 }
+
+// ---------------- 日志（环形，持久化） ----------------
+async function pushLog(level, msg) {
+  try {
+    const { logs = [] } = await stGet(["logs"]);
+    logs.push(`[${new Date().toLocaleTimeString("zh-CN", { hour12: false })}][${level}] ${String(msg).slice(0, 500)}`);
+    while (logs.length > 300) logs.shift();
+    await stSet({ logs });
+  } catch {}
+}
 function urlHash(url) {
   let h = 5381;
   for (let i = 0; i < url.length; i++) h = ((h << 5) + h + url.charCodeAt(i)) >>> 0;
@@ -104,9 +114,11 @@ async function chatLLM(cfg, system, user, maxTokens = 4000) {
       raw = await chatOnce(cfg, system, user, budget);
     } catch (e) {
       if (isBudgetReject(String(e.message || e)) && attempt < 3) {
+        pushLog("warn", `额度超限，预算减半至 ${budget}：${cfg.name}`);
         budget = Math.max(4096, Math.floor(budget / 2));
         continue;
       }
+      pushLog("error", `LLM 失败 [${cfg.name}]：${String(e.message || e).slice(0, 300)}`);
       throw e;
     }
     const content = stripThink(raw);
@@ -252,6 +264,21 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           sendResponse({ ok: true, reply: String(r).slice(0, 80) });
           break;
         }
+        case "log": {
+          pushLog(msg.level || "info", msg.msg || "");
+          sendResponse({ ok: true });
+          break;
+        }
+        case "getLogs": {
+          const { logs = [] } = await stGet(["logs"]);
+          sendResponse({ ok: true, logs });
+          break;
+        }
+        case "clearLogs": {
+          await stSet({ logs: [] });
+          sendResponse({ ok: true });
+          break;
+        }
         case "listModels": {
           const base = (msg.cfg.baseUrl || "").trim().replace(/\/+$/, "");
           let url;
@@ -298,9 +325,15 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           break;
         }
         case "genVocab": {
+          pushLog("info", `生词表生成开始：${msg.article.title.slice(0, 60)}`);
           const vocab = await genVocabFor(msg.article, (p) => {
             if (sender.tab) chrome.tabs.sendMessage(sender.tab.id, { type: "vocabProgress", ...p }).catch(() => {});
           });
+          const fc = vocab.chunkFailures ? Object.keys(vocab.chunkFailures).length : 0;
+          pushLog(fc ? "warn" : "info", `生词表生成结束：段落 ${vocab.paragraphs.length}，失败块 ${fc}`);
+          for (const [key, names] of Object.entries(vocab.chunkFailures || {})) {
+            pushLog("warn", `块 [${key}] 失败渠道：${names.join(", ")}`);
+          }
           sendResponse({ ok: true, vocab });
           break;
         }

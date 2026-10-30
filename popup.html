@@ -64,6 +64,17 @@
   </div>
   <div class="status" id="status"></div>
 
+  <div class="sep"></div>
+  <div class="row">
+    <label>运行日志（最近 300 条）</label>
+    <div class="btns">
+      <button id="bLogs" class="gray">查看/刷新日志</button>
+      <button id="bCopyLogs" class="gray">复制日志</button>
+      <button id="bClearLogs" class="gray">清空</button>
+    </div>
+    <pre id="logBox" style="display:none; max-height:180px; overflow:auto; background:#f4f6f5; padding:6px; border-radius:6px; font:10px Consolas, monospace;"></pre>
+  </div>
+
   <div class="hint">使用：打开英文文章网页 → 点右下角「刊读」悬浮球 → 生成摘要/生词表；双击句子或选中文字点「解析」看句解。</div>
 
   <script src="popup.js"></script>

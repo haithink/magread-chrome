@@ -100,6 +100,9 @@
       else res(r || { ok: false, error: "no response" });
     }));
   }
+  function log(level, msg) {
+    try { chrome.runtime.sendMessage({ type: "log", level, msg }, () => void chrome.runtime.lastError); } catch {}
+  }
   function el(tag, cls, text) {
     const e = document.createElement(tag);
     if (cls) e.className = cls;
@@ -114,14 +117,25 @@
     const pill = el("div", "kandu-pill", "刊读");
     pill.id = "kandu-pill";
     pill.addEventListener("click", async () => {
-      const article = extractArticle();
-      if (article.paragraphs.length < 2) {
-        alert("刊读：本页未检测到文章正文");
-        return;
+      try {
+        const article = extractArticle();
+        if (article.paragraphs.length < 2) {
+          alert("刊读：本页未检测到文章正文");
+          return;
+        }
+        openPanel(article);
+        await refreshCache(article);
+        await renderAll(article);
+      } catch (e) {
+        console.error("[kandu] init failed:", e);
+        log("error", "面板初始化失败：" + ((e && e.stack) || e.message || e));
+        const panel = ensurePanel();
+        const body = panel.querySelector(".kandu-panel-body");
+        if (body) {
+          clearEl(body);
+          body.appendChild(el("div", "kandu-error", "初始化失败：" + ((e && e.stack) || e.message || e)));
+        }
       }
-      openPanel(article);
-      await refreshCache(article);
-      renderAll(article);
     });
     document.documentElement.appendChild(pill);
   }
@@ -411,6 +425,20 @@
 
     if (state.digest) renderDigest(article, state.digest);
     if (state.vocab) { renderVocabList(article, state.vocab); injectBadges(article, state.vocab); }
+  }
+  // renderAll 自身异常兜底（显示到面板而不是静默空白）
+  function safeRenderAll(article) {
+    try {
+      return renderAll(article);
+    } catch (e) {
+      console.error("[kandu] renderAll failed:", e);
+      const panel = ensurePanel();
+      const body = panel.querySelector(".kandu-panel-body");
+      if (body) {
+        clearEl(body);
+        body.appendChild(el("div", "kandu-error", "初始化失败：" + ((e && e.stack) || e.message || e)));
+      }
+    }
   }
   function secError(id, e) {
     const panel = ensurePanel();
