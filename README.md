@@ -46,3 +46,8 @@
 Chrome / Chrome for Testing 的可执行文件；找不到浏览器时会跳过测试。
 测试使用临时浏览器配置和本地模拟 LLM，无需 API Key，不使用现有浏览器配置。
 覆盖操作按钮、标签切换、未配置 LLM 提示、摘要/生词表生成、缓存恢复、关闭重开和句解显示。
+
+## 许可证
+
+本项目原创代码采用 [MIT License](LICENSE)，版权归 haithink 及贡献者所有。
+第三方词表资源的许可范围见 [第三方资源说明](THIRD_PARTY_NOTICES.md)。
