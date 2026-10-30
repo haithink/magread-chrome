@@ -1,0 +1,122 @@
+/* 刊读助手 · content styles */
+#kandu-pill {
+  position: fixed !important;
+  right: 18px !important;
+  bottom: 18px !important;
+  z-index: 2147483600 !important;
+  background: #1b4b43 !important;
+  color: #fff !important;
+  font: 600 13px/1 "Microsoft YaHei UI", sans-serif !important;
+  padding: 9px 14px !important;
+  border-radius: 20px !important;
+  cursor: pointer !important;
+  box-shadow: 0 2px 10px rgba(0,0,0,.28) !important;
+  user-select: none !important;
+}
+#kandu-pill:hover { background: #266356 !important; }
+
+.kandu-panel {
+  position: fixed !important;
+  top: 56px !important;
+  right: 16px !important;
+  bottom: 64px !important;
+  width: 420px !important;
+  z-index: 2147483599 !important;
+  background: #fff !important;
+  border-radius: 12px !important;
+  box-shadow: 0 6px 28px rgba(0,0,0,.24) !important;
+  display: flex !important;
+  flex-direction: column !important;
+  overflow: hidden !important;
+  font-family: "Microsoft YaHei UI", sans-serif !important;
+}
+.kandu-panel-header {
+  background: #1b4b43 !important;
+  color: #fff !important;
+  padding: 9px 12px !important;
+  display: flex !important;
+  justify-content: space-between !important;
+  align-items: center !important;
+  font: 600 13px "Microsoft YaHei UI", sans-serif !important;
+  flex: none !important;
+}
+.kandu-close { cursor: pointer !important; font-size: 16px !important; padding: 0 4px !important; }
+.kandu-panel-body { padding: 10px 14px !important; overflow-y: auto !important; flex: 1 !important; }
+
+.kandu-section { margin-bottom: 14px !important; }
+.kandu-section-h, .kandu-sub {
+  font: 700 12px "Microsoft YaHei UI", sans-serif !important;
+  color: #7fa829 !important;
+  margin: 10px 0 4px !important;
+}
+.kandu-title-en { font: 700 14px "Microsoft YaHei UI", sans-serif !important; color: #1b4b43 !important; margin: 6px 0 2px !important; }
+.kandu-title-zh { font: 600 12px "Microsoft YaHei UI", sans-serif !important; color: #7fa829 !important; margin-bottom: 6px !important; }
+.kandu-summary { font: 12px/1.7 "Microsoft YaHei UI", sans-serif !important; color: #333 !important; }
+.kandu-loading, .kandu-meta { font: 11px "Microsoft YaHei UI", sans-serif !important; color: #8a9a94 !important; }
+.kandu-error { font: 11px "Microsoft YaHei UI", sans-serif !important; color: #b00020 !important; }
+.kandu-btn {
+  background: #1b4b43 !important;
+  color: #fff !important;
+  border: none !important;
+  border-radius: 6px !important;
+  padding: 7px 14px !important;
+  margin: 0 8px 8px 0 !important;
+  font: 600 12px "Microsoft YaHei UI", sans-serif !important;
+  cursor: pointer !important;
+}
+.kandu-btn:hover { background: #266356 !important; }
+.kandu-btn[disabled] { opacity: .55 !important; cursor: default !important; }
+
+/* 正文段落徽标与行内生词 */
+.kandu-badge {
+  display: inline-block !important;
+  background: #5f8a17 !important;
+  color: #fff !important;
+  font: 600 11px "Microsoft YaHei UI", sans-serif !important;
+  border-radius: 9px !important;
+  padding: 1px 8px !important;
+  margin-right: 8px !important;
+  cursor: pointer !important;
+  vertical-align: middle !important;
+  user-select: none !important;
+}
+.kandu-badge:hover { background: #7fa829 !important; }
+.kandu-has-badge { position: relative !important; }
+.kandu-inline-vocab {
+  background: #f4f9f1 !important;
+  border: 1px solid #d8e8cf !important;
+  border-radius: 8px !important;
+  padding: 8px 12px !important;
+  margin: 8px 0 !important;
+}
+
+/* 词条 */
+.kandu-entry { padding: 6px 0 !important; border-bottom: 1px dashed #e4e9e6 !important; }
+.kandu-entry:last-child { border-bottom: none !important; }
+.kandu-entry-head { display: flex !important; align-items: baseline !important; gap: 8px !important; flex-wrap: wrap !important; }
+.kandu-word { font: 700 13px "Microsoft YaHei UI", sans-serif !important; color: #1b4b43 !important; }
+.kandu-ph { font: 11px "Microsoft YaHei UI", sans-serif !important; color: #8a9a94 !important; }
+.kandu-pos { font: 11px "Microsoft YaHei UI", sans-serif !important; color: #7a8a86 !important; }
+.kandu-tag { font: 9px "Microsoft YaHei UI", sans-serif !important; color: #8a6d00 !important; border: 1px solid #d9c98a !important; border-radius: 4px !important; padding: 0 4px !important; }
+.kandu-sense { font: 12px/1.65 "Microsoft YaHei UI", sans-serif !important; color: #333 !important; }
+.kandu-intext { font: italic 11px "Microsoft YaHei UI", sans-serif !important; color: #8a9a94 !important; margin-top: 2px !important; }
+.kandu-root { font: 11px "Microsoft YaHei UI", sans-serif !important; color: #5c7f10 !important; margin-top: 2px !important; }
+.kandu-src { font: italic 12px "Microsoft YaHei UI", sans-serif !important; color: #667 !important; background: #f4f6f5 !important; padding: 6px 10px !important; border-radius: 6px !important; }
+.kandu-mono { font: 11px/1.5 Consolas, "Courier New", monospace !important; background: #f2f6f4 !important; padding: 8px 10px !important; border-radius: 6px !important; overflow-x: auto !important; white-space: pre !important; }
+.kandu-trans { background: #e9f4ef !important; font: 12px/1.7 "Microsoft YaHei UI", sans-serif !important; color: #244 !important; padding: 8px 10px !important; border-radius: 6px !important; }
+.kandu-point { margin-top: 6px !important; }
+
+/* 选中文本悬浮「解析」 */
+.kandu-selbtn {
+  position: absolute !important;
+  z-index: 2147483600 !important;
+  background: #7fa829 !important;
+  color: #fff !important;
+  font: 600 12px "Microsoft YaHei UI", sans-serif !important;
+  border-radius: 6px !important;
+  padding: 5px 12px !important;
+  cursor: pointer !important;
+  box-shadow: 0 2px 8px rgba(0,0,0,.25) !important;
+  user-select: none !important;
+}
+.kandu-selbtn:hover { background: #8fb92e !important; }
