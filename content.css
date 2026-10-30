@@ -120,3 +120,26 @@
   user-select: none !important;
 }
 .kandu-selbtn:hover { background: #8fb92e !important; }
+
+/* 标签页导航 */
+.kandu-tabs {
+  display: flex !important;
+  background: #14403a !important;
+  flex: none !important;
+}
+.kandu-tab {
+  flex: 1 !important;
+  text-align: center !important;
+  padding: 7px 0 !important;
+  font: 600 12px 'Microsoft YaHei UI', sans-serif !important;
+  color: #b8d8cd !important;
+  cursor: pointer !important;
+  user-select: none !important;
+  border-bottom: 2px solid transparent !important;
+}
+.kandu-tab:hover { color: #fff !important; }
+.kandu-tab-active {
+  color: #fff !important;
+  border-bottom-color: #b8e62e !important;
+  background: rgba(255,255,255,.06) !important;
+}

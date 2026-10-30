@@ -142,6 +142,12 @@
   }
 
   // ---------------- 侧栏面板 ----------------
+  const PANEL_SECTIONS = [
+    ["sec-actions", "操作"],
+    ["sec-digest", "摘要"],
+    ["sec-vocab", "生词表"],
+    ["sec-analysis", "句解"],
+  ];
   function ensurePanel() {
     if (state.panel && document.body.contains(state.panel)) return state.panel;
     const panel = el("div", "kandu-panel");
@@ -152,24 +158,39 @@
     close.addEventListener("click", () => panel.remove());
     header.appendChild(close);
     panel.appendChild(header);
+    const tabs = el("div", "kandu-tabs");
+    for (const [id, label] of PANEL_SECTIONS) {
+      const t = el("span", "kandu-tab", label);
+      t.dataset.sec = id;
+      t.addEventListener("click", () => showSection(id));
+      tabs.appendChild(t);
+    }
+    panel.appendChild(tabs);
     const body = el("div", "kandu-panel-body");
     panel.appendChild(body);
+    for (const [id] of PANEL_SECTIONS) {
+      const sec = el("div", "kandu-section");
+      sec.id = id;
+      sec.style.display = "none";
+      body.appendChild(sec);
+    }
     document.documentElement.appendChild(panel);
     state.panel = panel;
     return panel;
   }
+  function showSection(id) {
+    const panel = ensurePanel();
+    for (const sec of panel.querySelectorAll(".kandu-section"))
+      sec.style.display = sec.id === id ? "block" : "none";
+    for (const t of panel.querySelectorAll(".kandu-tab"))
+      t.classList.toggle("kandu-tab-active", t.dataset.sec === id);
+  }
   function panelSection(title, id) {
     const panel = ensurePanel();
-    const body = panel.querySelector(".kandu-panel-body");
-    let sec = body.querySelector("#" + id);
-    if (!sec) {
-      sec = el("div", "kandu-section");
-      sec.id = id;
-      body.appendChild(sec);
-    }
+    showSection(id);
+    const sec = panel.querySelector("#" + id);
     clearEl(sec);
-    const h = el("div", "kandu-section-h", title);
-    sec.appendChild(h);
+    sec.appendChild(el("div", "kandu-section-h", title));
     const content = el("div", "kandu-section-content");
     sec.appendChild(content);
     return content;
@@ -324,8 +345,8 @@
     openPanelToSection(sec);
   }
   function openPanelToSection(sec) {
-    const panel = ensurePanel();
-    sec.scrollIntoView({ behavior: "smooth", block: "start" });
+    ensurePanel();
+    showSection(sec.id);
   }
 
   // ---------------- 交互 ----------------
@@ -452,6 +473,7 @@
 
   function openPanel(article) {
     const panel = ensurePanel();
+    showSection("sec-actions");
     const body = panel.querySelector(".kandu-panel-body");
     if (body && !body.children.length) {
       body.appendChild(el("div", "kandu-loading", "正在加载…（若长时间无内容，点工具栏图标查看日志）"));
