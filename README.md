@@ -1,4 +1,4 @@
-# 刊读助手 · Chrome 扩展（v1.0.0）
+# 刊读助手 · Chrome 扩展（v1.1.2）
 
 英文网页文章阅读辅助：**LLM 摘要 / 逐段生词表 / 双击与选中句解 / 本地 CET-4 粗筛**。
 与刊读桌面版（magread-desktop）同源的提示词、多 LLM 轮换与容错逻辑。
@@ -9,6 +9,9 @@
 2. 右上角打开「开发者模式」
 3. 点「加载已解压的扩展程序」→ 选择本文件夹（magread-chrome）
 4. 工具栏出现「刊读助手」图标即安装成功
+
+已有安装更新代码后，先在 `chrome://extensions` 点击「刊读助手」的重新加载按钮，
+再刷新已打开的文章网页，让新版本的内容脚本生效。
 
 ## 使用
 
@@ -35,3 +38,11 @@
 - `content.js` / `content.css` 正文抽取与界面注入
 - `popup.html` / `popup.js` 设置弹窗
 - `assets/cet4_words.txt` CET-4 词表（本地粗筛用）
+
+## 开发验证
+
+使用 Node.js 22 或更新版本运行 `node --test tests/panel.test.cjs`。
+测试默认使用同级 `../chrome-win64/chrome.exe`，也可用环境变量 `CHROME_PATH` 指定
+Chrome / Chrome for Testing 的可执行文件；找不到浏览器时会跳过测试。
+测试使用临时浏览器配置和本地模拟 LLM，无需 API Key，不使用现有浏览器配置。
+覆盖操作按钮、标签切换、未配置 LLM 提示、摘要/生词表生成、缓存恢复、关闭重开和句解显示。

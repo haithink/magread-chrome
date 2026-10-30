@@ -150,18 +150,13 @@
             "本页未检测到文章正文：可能被登录墙/同意墙遮挡，或这不是文章页。请确认正文已显示后再点悬浮球。"));
           return;
         }
-        if (state.digest || state.vocab) renderAll(article); // 已有数据：立即渲染，不等网络
         await refreshCache(article);
-        await renderAll(article);
+        // 缓存只更新结果，不重建按钮或切换用户正在查看的标签页。
+        if (state.panel && state.panel.isConnected) renderCached(article);
       } catch (e) {
         console.error("[kandu] init failed:", e);
         log("error", "面板初始化失败：" + ((e && e.stack) || e.message || e));
-        const panel = ensurePanel();
-        const body = panel.querySelector(".kandu-panel-body");
-        if (body) {
-          clearEl(body);
-          body.appendChild(el("div", "kandu-error", "初始化失败：" + ((e && e.stack) || e.message || e)));
-        }
+        secError("sec-actions", e);
       }
     });
     document.documentElement.appendChild(pill);
@@ -175,7 +170,8 @@
     ["sec-analysis", "句解"],
   ];
   function ensurePanel() {
-    if (state.panel && document.body.contains(state.panel)) return state.panel;
+    // 面板挂在 documentElement 下，不属于 body；必须按实际挂载位置检查。
+    if (state.panel && document.documentElement.contains(state.panel)) return state.panel;
     const panel = el("div", "kandu-panel");
     panel.id = "kandu-panel";
     const header = el("div", "kandu-panel-header");
@@ -211,9 +207,9 @@
     for (const t of panel.querySelectorAll(".kandu-tab"))
       t.classList.toggle("kandu-tab-active", t.dataset.sec === id);
   }
-  function panelSection(title, id) {
+  function panelSection(title, id, activate = true) {
     const panel = ensurePanel();
-    showSection(id);
+    if (activate) showSection(id);
     const sec = panel.querySelector("#" + id);
     clearEl(sec);
     sec.appendChild(el("div", "kandu-section-h", title));
@@ -234,8 +230,8 @@
     state.digest = rr.digest;
     return rr.digest;
   }
-  function renderDigest(article, d) {
-    const sec = panelSection("文章摘要", "sec-digest");
+  function renderDigest(article, d, activate = true) {
+    const sec = panelSection("文章摘要", "sec-digest", activate);
     sec.appendChild(el("div", "kandu-title-en", d.titleEn || article.title));
     if (d.titleZh) sec.appendChild(el("div", "kandu-title-zh", d.titleZh));
     if (d.summaryZh) sec.appendChild(el("div", "kandu-summary", d.summaryZh));
@@ -257,8 +253,8 @@
     injectBadges(article, state.vocab);
     return state.vocab;
   }
-  function renderVocabList(article, vocab) {
-    const sec = panelSection("生词表", "sec-vocab");
+  function renderVocabList(article, vocab, activate = true) {
+    const sec = panelSection("生词表", "sec-vocab", activate);
     const te = vocab.titleEntries || [];
     if (te.length) {
       sec.appendChild(el("div", "kandu-sub", "标题生词"));
@@ -368,11 +364,8 @@
       sec.appendChild(el("div", "kandu-sub", "参考译文"));
       sec.appendChild(el("div", "kandu-trans", a.translation));
     }
-    openPanelToSection(sec);
-  }
-  function openPanelToSection(sec) {
-    ensurePanel();
-    showSection(sec.id);
+    // sec 是内容容器，没有标签页 ID。
+    showSection("sec-analysis");
   }
 
   // ---------------- 交互 ----------------
@@ -437,12 +430,12 @@
   // ---------------- 面板总渲染 ----------------
   async function refreshCache(article) {
     const r = await send({ type: "getCache", url: article.url });
+    if (!r.ok) throw new Error(r.error);
     state.digest = r.digest || null;
     state.vocab = r.vocab || null;
   }
-  async function renderAll(article) {
-    const actions = panelSection("操作", "sec-actions");
-    clearEl(actions);
+  function renderAll(article) {
+    const actions = panelSection("操作", "sec-actions", false);
     const b1 = el("button", "kandu-btn", "生成摘要");
     b1.addEventListener("click", async () => {
       b1.disabled = true; b1.textContent = "生成中…";
@@ -471,22 +464,11 @@
     secError("sec-digest", null);
     secError("sec-vocab", null);
 
-    if (state.digest) renderDigest(article, state.digest);
-    if (state.vocab) { renderVocabList(article, state.vocab); injectBadges(article, state.vocab); }
+    renderCached(article);
   }
-  // renderAll 自身异常兜底（显示到面板而不是静默空白）
-  function safeRenderAll(article) {
-    try {
-      return renderAll(article);
-    } catch (e) {
-      console.error("[kandu] renderAll failed:", e);
-      const panel = ensurePanel();
-      const body = panel.querySelector(".kandu-panel-body");
-      if (body) {
-        clearEl(body);
-        body.appendChild(el("div", "kandu-error", "初始化失败：" + ((e && e.stack) || e.message || e)));
-      }
-    }
+  function renderCached(article) {
+    if (state.digest) renderDigest(article, state.digest, false);
+    if (state.vocab) { renderVocabList(article, state.vocab, false); injectBadges(article, state.vocab); }
   }
   function secError(id, e) {
     const panel = ensurePanel();
@@ -494,16 +476,17 @@
     if (!sec) return;
     let old = sec.querySelector(".kandu-error");
     if (old) old.remove();
-    if (e) { const d = el("div", "kandu-error", "失败：" + (e.message || e)); sec.insertBefore(d, sec.firstChild.nextSibling || sec.firstChild); }
+    if (e) {
+      const content = sec.querySelector(".kandu-section-content") ||
+        panelSection(PANEL_SECTIONS.find(([sectionId]) => sectionId === id)[1], id, false);
+      content.prepend(el("div", "kandu-error", "失败：" + (e.message || e)));
+      showSection(id);
+    }
   }
 
   function openPanel(article) {
-    const panel = ensurePanel();
+    ensurePanel();
     showSection("sec-actions");
-    const body = panel.querySelector(".kandu-panel-body");
-    if (body && !body.children.length) {
-      body.appendChild(el("div", "kandu-loading", "正在加载…（若长时间无内容，点工具栏图标查看日志）"));
-    }
     renderAll(article);
   }
 
