@@ -3,6 +3,13 @@
 英文网页文章阅读辅助：**LLM 摘要 / 逐段生词表 / 双击与选中句解 / 本地 CET-4 粗筛**。
 与刊读桌面版（magread-desktop）同源的提示词、多 LLM 轮换与容错逻辑。
 
+## 下载
+
+**[下载刊读助手 v1.1.2（zip，约 50 KiB）](https://github.com/haithink/magread-chrome/raw/refs/heads/main/downloads/kandu-helper-chrome-v1.1.2.zip)**
+
+解压到长期保留的文件夹（如 `D:\KanduHelper\`），按下方步骤以开发者模式加载。
+注意：解压出的目录就是扩展本体，加载后不可删除。
+
 ## 安装（开发者模式加载）
 
 1. 打开 Chrome → 地址栏输入 `chrome://extensions`
