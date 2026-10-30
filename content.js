@@ -46,6 +46,25 @@
       seen.add(t);
       paragraphs.push(t);
     }
+    // JSON-LD 兜底：同意墙/懒加载导致 DOM 缺正文时，从结构化数据取全文
+    if (paragraphs.length < 2) {
+      for (const s of document.querySelectorAll('script[type="application/ld+json"]')) {
+        try {
+          const data = JSON.parse(s.textContent);
+          const items = Array.isArray(data) ? data : [data, ...((data && data["@graph"]) || [])];
+          for (const d of items) {
+            if (!d || !(d["@type"] === "Article" || d["@type"] === "NewsArticle" || d["@type"] === "BlogPosting") || !d.articleBody) continue;
+            paragraphs.length = 0;
+            for (const para of String(d.articleBody).split(/\n\s*\n/)) {
+              const t = para.replace(/\s+/g, " ").trim();
+              if (t.length >= 40) paragraphs.push(t);
+            }
+            break;
+          }
+          if (paragraphs.length >= 2) break;
+        } catch {}
+      }
+    }
     return { url, title: title.trim(), paragraphs };
   }
 
@@ -118,12 +137,19 @@
     pill.id = "kandu-pill";
     pill.addEventListener("click", async () => {
       try {
-        const article = extractArticle();
+        let article = extractArticle();
         if (article.paragraphs.length < 2) {
-          alert("刊读：本页未检测到文章正文");
-          return;
+          // 页面可能尚未加载完：等 1.5 秒重试一次
+          await new Promise((r) => setTimeout(r, 1500));
+          article = extractArticle();
         }
         openPanel(article);
+        if (article.paragraphs.length < 2) {
+          const sec = panelSection("文章摘要", "sec-digest");
+          sec.appendChild(el("div", "kandu-error",
+            "本页未检测到文章正文：可能被登录墙/同意墙遮挡，或这不是文章页。请确认正文已显示后再点悬浮球。"));
+          return;
+        }
         if (state.digest || state.vocab) renderAll(article); // 已有数据：立即渲染，不等网络
         await refreshCache(article);
         await renderAll(article);
