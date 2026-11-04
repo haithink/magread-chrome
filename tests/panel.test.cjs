@@ -67,6 +67,7 @@ test('article panel in Chrome', { skip: !existsSync(chrome), timeout: 90000 }, a
   const article = '<!doctype html><meta charset="utf-8"><title>Reading test</title><article><h1>Reading test</h1>' +
     '<p>Researchers discovered a remarkable phenomenon in the ocean. Their findings could transform our understanding of marine ecosystems.</p>' +
     '<p>The scientists collected evidence over several years. They hope further research will explain these extraordinary observations.</p></article>';
+  let vocabCalls = 0;
   const server = http.createServer(async (req, res) => {
     if (req.method !== 'POST') {
       res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
@@ -82,10 +83,15 @@ test('article panel in Chrome', { skip: !existsSync(chrome), timeout: 90000 }, a
       result = { titleEn: 'Reading test', titleZh: '阅读测试', summaryZh: '这是测试摘要。' };
     } else if (system.includes('grammarDiagram')) {
       result = { vocab: [], grammarDiagram: 'Researchers discovered a phenomenon.\n主语 谓语 宾语', grammarPoints: [], context: '介绍研究发现。', translation: '研究人员发现了一种现象。' };
-    } else if (messages.at(-1).content.includes('### 段落 0\n')) {
-      result = { titleEntries: [], paragraphs: [{ index: 0, startWords: 'Researchers discovered', entries: [{ word: 'phenomenon', phonetic: 'fəˈnɑːmɪnən', pos: 'n.', sense: '现象' }] }] };
     } else {
-      result = { paragraphs: [{ index: -1, startWords: 'Reading test', entries: [] }] };
+      vocabCalls++;
+      result = { paragraphs: [...messages.at(-1).content.matchAll(/### 段落 (-?\d+)\n/g)].map((m) => ({
+        index: +m[1], entries: +m[1] === 0 ? [['phenomenon', 'n.', '现象', '', false, 'fəˈnɑːmɪnən']] : [],
+      })) };
+      res.writeHead(200, { 'Content-Type': 'text/event-stream' });
+      res.end('data: ' + JSON.stringify({ choices: [{ delta: { content: JSON.stringify(result) } }] }) + '\n\n' +
+        'data: ' + JSON.stringify({ choices: [{ delta: {}, finish_reason: 'stop' }] }) + '\n\ndata: [DONE]\n\n');
+      return;
     }
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ choices: [{ message: { content: JSON.stringify(result) } }] }));
@@ -162,6 +168,9 @@ test('article panel in Chrome', { skip: !existsSync(chrome), timeout: 90000 }, a
     await click('[data-sec="sec-actions"]');
     assert.equal(await visible('#sec-actions button'), true);
     assert.equal(await page.evaluate("document.querySelector('#sec-actions button').disabled"), false);
+    await click('#sec-actions button:nth-child(2)');
+    await until(() => page.evaluate("document.querySelector('#sec-vocab')?.textContent.includes('未配置 LLM')"), 'Vocabulary configuration error not shown');
+    assert.equal(await page.evaluate("document.querySelector('#sec-actions button:nth-child(2)').disabled"), false);
   });
 
   await t.test('summary and vocabulary buttons render results through the background worker', async () => {
@@ -182,6 +191,8 @@ test('article panel in Chrome', { skip: !existsSync(chrome), timeout: 90000 }, a
     await click('[data-sec="sec-actions"]');
     await click('#sec-actions button:nth-child(3)');
     assert.equal(await visible('#sec-vocab .kandu-word'), true);
+    assert.equal(vocabCalls, 1, 'title and paragraphs should share one request');
+    assert.equal(await page.evaluate("document.querySelector('#sec-actions button:nth-child(2)').textContent"), '生词表已完成');
   });
 
   await t.test('cached results keep the action tab selected and closing/reopening keeps one panel', async () => {
@@ -195,6 +206,14 @@ test('article panel in Chrome', { skip: !existsSync(chrome), timeout: 90000 }, a
     await pause(200);
     assert.equal(await page.evaluate("document.querySelectorAll('#kandu-panel').length"), 1);
     assert.equal(await active(), 'sec-actions');
+    assert.equal(await page.evaluate("document.querySelector('#sec-actions button:nth-child(2)').textContent"), '生词表已完成');
+    await click('#sec-actions button:nth-child(2)');
+    await until(() => visible('#sec-vocab .kandu-word'), 'Cached vocabulary not shown after reopening');
+    assert.equal(vocabCalls, 1, 'badge text must not change article cache identity');
+    await click('article .kandu-badge');
+    assert.equal(await visible('article .kandu-inline-vocab'), true);
+    await click('article .kandu-badge');
+    assert.equal(await visible('article .kandu-inline-vocab'), false);
   });
 
   await t.test('sentence analysis remains visible after the response', async () => {

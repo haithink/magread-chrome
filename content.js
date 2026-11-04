@@ -3,14 +3,18 @@
   if (window.__kanduLoaded) return;
   window.__kanduLoaded = true;
 
-  const state = { panel: null, busy: false, vocab: null, digest: null };
+  const state = { panel: null, busy: false, vocab: null, digest: null, article: null };
 
   // 后台生词表逐块进度
   chrome.runtime.onMessage.addListener((msg) => {
-    if (msg && msg.type === "vocabProgress") {
+    if (msg && msg.type === "vocabProgress" && msg.url === state.article?.url) {
+      if (msg.vocab) {
+        state.vocab = msg.vocab;
+        injectBadges(state.article, state.vocab);
+      }
       const sec = document.querySelector("#sec-vocab .kandu-loading");
       const llm = msg.llm ? " · " + msg.llm : "";
-      if (sec) sec.textContent = `生词表生成中… ${msg.done}/${msg.total}${llm}（失败块自动换模型重试）`;
+      if (sec) sec.textContent = `生词表生成中… 已处理 ${msg.done}/${msg.total} 块${llm}（完成的段落可点击正文徽标查看）`;
     }
   });
 
@@ -41,7 +45,7 @@
     const seen = new Set();
     const paragraphs = [];
     for (const p of root.querySelectorAll("p")) {
-      const t = (p.innerText || "").replace(/\s+/g, " ").trim();
+      const t = paragraphText(p);
       if (t.length < 40 || seen.has(t)) continue;
       seen.add(t);
       paragraphs.push(t);
@@ -69,6 +73,12 @@
   }
 
   // ---------------- 句子切分 ----------------
+  function paragraphText(p) {
+    let text = p.innerText || "";
+    const badge = p.querySelector(":scope > .kandu-badge");
+    if (badge && text.startsWith(badge.innerText)) text = text.slice(badge.innerText.length);
+    return text.replace(/\s+/g, " ").trim();
+  }
   const ABBREV = new Set(["mr", "mrs", "ms", "dr", "prof", "st", "jr", "sr", "vs", "etc", "inc", "ltd", "no", "fig", "u.s", "u.k", "d.c"]);
   function splitSentences(text) {
     const out = [];
@@ -144,6 +154,7 @@
           article = extractArticle();
         }
         openPanel(article);
+        state.article = article;
         if (article.paragraphs.length < 2) {
           const sec = panelSection("文章摘要", "sec-digest");
           sec.appendChild(el("div", "kandu-error",
@@ -221,7 +232,7 @@
   // ---------------- 摘要 ----------------
   async function ensureDigest(article) {
     if (state.digest) return state.digest;
-    const r = await send({ type: "getCache", url: article.url });
+    const r = await send({ type: "getCache", url: article.url, article });
     if (r.digest) { state.digest = r.digest; return r.digest; }
     const sec = panelSection("文章摘要", "sec-digest");
     sec.appendChild(el("div", "kandu-loading", "摘要生成中…（首次约十几秒，结果缓存）"));
@@ -240,13 +251,13 @@
   // ---------------- 生词表 ----------------
   async function ensureVocab(article) {
     if (state.vocab) return state.vocab;
-    const r = await send({ type: "getCache", url: article.url });
+    const r = await send({ type: "getCache", url: article.url, article });
     if (r.vocab) { state.vocab = r.vocab; return r.vocab; }
     return null;
   }
   async function genVocab(article) {
     const sec = panelSection("生词表", "sec-vocab");
-    sec.appendChild(el("div", "kandu-loading", "生词表生成中…（逐块调用，敏感内容自动换模型跳过）"));
+    sec.appendChild(el("div", "kandu-loading", "生词表生成中…（本地筛词，最多两块同时处理）"));
     const rr = await send({ type: "genVocab", article });
     if (!rr.ok) { clearEl(sec); sec.appendChild(el("div", "kandu-error", "失败：" + rr.error)); throw new Error(rr.error); }
     state.vocab = rr.vocab;
@@ -255,6 +266,9 @@
   }
   function renderVocabList(article, vocab, activate = true) {
     const sec = panelSection("生词表", "sec-vocab", activate);
+    const complete = vocabComplete(article, vocab);
+    const elapsed = vocab.generationStats ? ` · 本次 ${(vocab.generationStats.elapsedMs / 1000).toFixed(1)} 秒` : "";
+    sec.appendChild(el("div", "kandu-meta", (complete ? "生词表已完成" : "部分段落待生成，请在操作页继续生成") + elapsed));
     const te = vocab.titleEntries || [];
     if (te.length) {
       sec.appendChild(el("div", "kandu-sub", "标题生词"));
@@ -266,7 +280,11 @@
       sec.appendChild(el("div", "kandu-sub", `第 ${p.index + 1} 段 ｜ ${p.startWords.slice(0, 24)}…`));
       p.entries.forEach((e) => { sec.appendChild(entryEl(e)); shown++; });
     }
-    if (!shown && !te.length) sec.appendChild(el("div", "kandu-meta", "全书无生词记录"));
+    if (!shown && !te.length) sec.appendChild(el("div", "kandu-meta", complete ? "本文无生词记录" : "暂无生词结果"));
+  }
+  function vocabComplete(article, vocab) {
+    const processed = new Set(vocab?.processedParagraphs || []);
+    return processed.has(-1) && article.paragraphs.every((_, i) => processed.has(i));
   }
   function entryEl(e) {
     const box = el("div", "kandu-entry");
@@ -286,9 +304,11 @@
   function injectBadges(article, vocab) {
     const ps = collectArticlePs(article);
     for (const p of vocab.paragraphs || []) {
-      if (!p.entries.length) continue;
       const elP = ps[p.index];
-      if (!elP || elP.querySelector(":scope > .kandu-badge")) continue;
+      if (!elP) continue;
+      const old = elP.querySelector(":scope > .kandu-badge");
+      if (!p.entries.length) { if (old) old.remove(); continue; }
+      if (old) old.remove();
       const badge = el("span", "kandu-badge", `词 ${p.entries.length}`);
       badge.addEventListener("click", (e) => {
         e.stopPropagation();
@@ -306,16 +326,18 @@
     elP.insertAdjacentElement("afterend", box);
   }
 
-  function collectArticlePs() {
-    const root = document.querySelector("article") || document.querySelector('[role="main"]') || document.querySelector("main") || document.body;
-    const seen = new Set(), out = [];
-    for (const p of root.querySelectorAll("p")) {
-      const t = (p.innerText || "").replace(/\s+/g, " ").trim();
-      if (t.length < 40 || seen.has(t)) continue;
-      seen.add(t);
-      out.push(p);
+  function collectArticlePs(article) {
+    // 按抽取时的正文匹配 DOM，避免根容器不同造成徽标错位。
+    const expected = article ? new Set(article.paragraphs) : null;
+    const out = new Map();
+    for (const p of document.querySelectorAll("p")) {
+      if (p.closest("#kandu-panel, .kandu-inline-vocab")) continue;
+      const t = paragraphText(p);
+      if (t.length < 40 || out.has(t)) continue;
+      if (expected && !expected.has(t)) continue;
+      out.set(t, p);
     }
-    return out;
+    return article ? article.paragraphs.map((t) => out.get(t)) : [...out.values()];
   }
 
   // ---------------- 句解 ----------------
@@ -370,13 +392,13 @@
 
   // ---------------- 交互 ----------------
   function paraInfoFromNode(node) {
-    const ps = collectArticlePs();
+    const ps = collectArticlePs(state.article || extractArticle());
     let elP = node && node.nodeType === 3 ? node.parentElement : node;
     while (elP && elP.tagName !== "P") elP = elP.parentElement;
     if (!elP) return null;
     const idx = ps.indexOf(elP);
     if (idx < 0) return null;
-    return { elP, idx, text: ps[idx].innerText.replace(/\s+/g, " ").trim() };
+    return { elP, idx, text: paragraphText(ps[idx]) };
   }
 
   // 双击：解析光标所在句
@@ -390,6 +412,7 @@
     const walker = document.createTreeWalker(info.elP, NodeFilter.SHOW_TEXT);
     let n;
     while ((n = walker.nextNode())) {
+      if (n.parentElement.closest(".kandu-badge")) continue;
       if (n === range.startContainer) { prefix += n.textContent.slice(0, range.startOffset); break; }
       prefix += n.textContent;
     }
@@ -429,7 +452,7 @@
 
   // ---------------- 面板总渲染 ----------------
   async function refreshCache(article) {
-    const r = await send({ type: "getCache", url: article.url });
+    const r = await send({ type: "getCache", url: article.url, article });
     if (!r.ok) throw new Error(r.error);
     state.digest = r.digest || null;
     state.vocab = r.vocab || null;
@@ -444,15 +467,19 @@
       b1.disabled = false; b1.textContent = "生成摘要";
     });
     actions.appendChild(b1);
-    const b2 = el("button", "kandu-btn", "生成生词表");
+    const vocabLabel = () => vocabComplete(article, state.vocab) ? "生词表已完成" : (state.vocab ? "继续生成生词表" : "生成生词表");
+    const b2 = el("button", "kandu-btn", vocabLabel());
     b2.addEventListener("click", async () => {
+      if (state.busy) return;
+      state.busy = true;
       b2.disabled = true; b2.textContent = "生成中…";
       try {
         const v = await genVocab(article);
         renderVocabList(article, v);
         injectBadges(article, v);
       } catch (e) { secError("sec-vocab", e); }
-      b2.disabled = false; b2.textContent = "生成生词表";
+      state.busy = false;
+      b2.disabled = false; b2.textContent = vocabLabel();
     });
     actions.appendChild(b2);
     const b3 = el("button", "kandu-btn", "查看生词表");
@@ -467,6 +494,8 @@
     renderCached(article);
   }
   function renderCached(article) {
+    const button = state.panel?.querySelector("#sec-actions button:nth-child(2)");
+    if (button && !state.busy) button.textContent = vocabComplete(article, state.vocab) ? "生词表已完成" : (state.vocab ? "继续生成生词表" : "生成生词表");
     if (state.digest) renderDigest(article, state.digest, false);
     if (state.vocab) { renderVocabList(article, state.vocab, false); injectBadges(article, state.vocab); }
   }
