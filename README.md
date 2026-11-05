@@ -3,6 +3,36 @@
 英文网页文章阅读辅助：**LLM 摘要 / 逐段生词表 / 双击与选中句解 / 本地 CET-4 粗筛**。
 与刊读桌面版（magread-desktop）同源的提示词、多 LLM 轮换与容错逻辑。
 
+## 界面预览
+
+在英文网页旁展开刊读侧栏，先看摘要，再查看生词或解析句子，保持原文阅读的连贯性。
+
+**逐段生词：原文保留在左侧，音标、本文含义与词根词源集中显示在右侧。**
+
+![Chrome 网页版：英文正文、段落生词标记与生词侧栏](docs/screenshots/chrome-vocabulary.png)
+
+<table>
+  <tr>
+    <th>中英文标题与中文摘要</th>
+    <th>句子解析与参考译文</th>
+  </tr>
+  <tr>
+    <td><img src="docs/screenshots/chrome-summary.png" alt="Chrome 网页版：文章中文摘要" width="520"></td>
+    <td><img src="docs/screenshots/chrome-analysis.png" alt="Chrome 网页版：疑难词汇、语法图解、语境和参考译文" width="520"></td>
+  </tr>
+</table>
+
+截图来自实际运行的扩展，使用原创示例网页及本地模拟接口返回的摘要、释义和句解演示数据；实际生成结果随所选模型而异。
+
+### 其他版本
+
+三个版本分别维护，按阅读场景选择；目前不提供跨端自动同步。
+
+| [Windows 桌面版](https://github.com/haithink/magread-desktop) | [Android 手机版](https://github.com/haithink/magread) |
+| --- | --- |
+| <a href="https://github.com/haithink/magread-desktop"><img src="https://raw.githubusercontent.com/haithink/magread-desktop/main/docs/screenshots/desktop-digest.png" alt="Windows 桌面版：文章摘要、阅读标记与最近阅读" width="580"></a> | <a href="https://github.com/haithink/magread"><img src="https://raw.githubusercontent.com/haithink/magread/main/docs/screenshots/android-reader.png" alt="Android 手机版原文阅读界面" width="210"></a> |
+| 导入 EPUB / PDF，浏览摘要、标记文章、自动续读。 | 手机上阅读 EPUB / PDF，随时查看生词与句解。 |
+
 ## 下载
 
 **[下载刊读助手 v1.2.0（zip）](https://github.com/haithink/magread-chrome/raw/refs/heads/main/downloads/kandu-helper-chrome-v1.2.0.zip)**
