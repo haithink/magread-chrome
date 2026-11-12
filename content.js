@@ -3,20 +3,99 @@
   if (window.__kanduLoaded) return;
   window.__kanduLoaded = true;
 
-  const state = { panel: null, busy: false, vocab: null, digest: null, article: null };
+  const state = { panel: null, vocab: null, digest: null, article: null, tasks: {}, analysis: null };
+  const TASKS = { digest: ["摘要", "sec-digest"], vocab: ["生词表", "sec-vocab"], analysis: ["句解", "sec-analysis"] };
+  let progressTimer = null;
 
-  // 后台生词表逐块进度
+  // 进度只更新对应请求，防止旧文章或并发句解的消息覆盖当前面板。
   chrome.runtime.onMessage.addListener((msg) => {
-    if (msg && msg.type === "vocabProgress" && msg.url === state.article?.url) {
-      if (msg.vocab) {
-        state.vocab = msg.vocab;
-        injectBadges(state.article, state.vocab);
-      }
-      const sec = document.querySelector("#sec-vocab .kandu-loading");
-      const llm = msg.llm ? " · " + msg.llm : "";
-      if (sec) sec.textContent = `生词表生成中… 已处理 ${msg.done}/${msg.total} 块${llm}（完成的段落可点击正文徽标查看）`;
+    if (msg?.type !== "generationProgress") return;
+    const task = state.tasks[msg.task];
+    if (!task?.running || task.requestId !== msg.requestId || task.article.url !== msg.url) return;
+    task.info = { ...task.info, ...msg };
+    if (msg.vocab) {
+      state.vocab = msg.vocab;
+      injectBadges(task.article, msg.vocab);
+      if (state.panel?.isConnected) renderVocabList(task.article, msg.vocab, false);
     }
+    updateProgress();
   });
+
+  function startTask(kind, article) {
+    const task = { requestId: kind + "-" + Date.now() + "-" + Math.random().toString(36).slice(2),
+      running: true, article, started: Date.now(), info: { phase: "preparing" } };
+    state.tasks[kind] = task;
+    if (!progressTimer) progressTimer = setInterval(updateProgress, 500);
+    updateProgress();
+    return task;
+  }
+  function finishTask(kind, task) {
+    task.running = false;
+    // 已被后一个句解替代的任务，不改变新任务的显示。
+    if (state.tasks[kind] !== task) return;
+    updateProgress();
+    if (!Object.values(state.tasks).some((t) => t.running)) {
+      clearInterval(progressTimer); progressTimer = null;
+    }
+  }
+  function progressCard(kind) {
+    const box = el("div", "kandu-progress");
+    box.dataset.task = kind;
+    box.setAttribute("role", "status");
+    box.appendChild(el("div", "kandu-progress-title"));
+    const bar = el("progress", "kandu-progress-bar");
+    bar.max = 100;
+    bar.setAttribute("aria-label", TASKS[kind][0] + "生成进度");
+    box.appendChild(bar);
+    box.appendChild(el("div", "kandu-progress-detail"));
+    return box;
+  }
+  function phaseText(info) {
+    const phases = { preparing: "准备请求", waiting: "等待模型响应", thinking: "模型正在思考",
+      receiving: "正在接收内容", validating: "校验结果", saving: "保存结果", retrying: "正在重试", processing: "处理段落", finished: "正在整理结果" };
+    return phases[info.phase] || "生成中";
+  }
+  function updateProgress() {
+    const panel = state.panel;
+    if (!panel?.isConnected) return;
+    const running = Object.entries(state.tasks).filter(([, t]) => t.running);
+    for (const [kind, [, id]] of Object.entries(TASKS)) {
+      const task = state.tasks[kind], section = panel.querySelector("#" + id);
+      let box = section.querySelector(".kandu-progress");
+      if (!task?.running) { if (box) box.remove(); continue; }
+      if (!box) {
+        box = progressCard(kind);
+        (section.querySelector(".kandu-section-content") || section).prepend(box);
+      }
+      const info = task.info, seconds = ((Date.now() - task.started) / 1000).toFixed(1);
+      const bar = box.querySelector("progress");
+      let label = phaseText(info), detail;
+      if (kind === "vocab" && info.totalParagraphs) {
+        // 以真正保存成功的段落计数，失败块不计入完成百分比。
+        const percent = Math.floor(info.completedParagraphs / info.totalParagraphs * 100);
+        bar.value = percent;
+        label = `已完成 ${info.completedParagraphs}/${info.totalParagraphs} 段（含标题） · ${percent}%`;
+        const active = (info.active || []).map((a) => `块 ${a.chunk} · ${a.llm || "模型"} · ${phaseText(a)}${a.chars ? " " + a.chars + " 字符" : ""}${a.attempt > 1 ? " · 第 " + a.attempt + " 次请求" : ""}`);
+        detail = [active.join("；"), info.failedChunks ? `${info.failedChunks} 块失败待补，可稍后继续生成` : "完成的段落可立即点击正文「词」标记查看"].filter(Boolean).join("\n");
+      } else {
+        bar.removeAttribute("value");
+        detail = [info.llm, info.chars ? `已接收 ${info.chars} 字符` : "连接成功后会显示接收进度",
+          info.attempt > 1 ? `第 ${info.attempt} 次请求` : "", info.reason].filter(Boolean).join(" · ");
+      }
+      box.querySelector(".kandu-progress-title").textContent = `${label} · ${seconds} 秒`;
+      box.querySelector(".kandu-progress-detail").textContent = detail;
+    }
+    const footer = panel.querySelector(".kandu-footer");
+    footer.classList.toggle("kandu-footer-busy", running.length > 0);
+    footer.textContent = running.length ? running.map(([kind, t]) => `${TASKS[kind][0]}生成中 · ${Math.floor((Date.now() - t.started) / 1000)} 秒`).join(" ｜ ") : "结果保存在此浏览器 · 双击原文可解析句子";
+    const digestButton = panel.querySelector("#kandu-gen-digest");
+    if (digestButton) { digestButton.disabled = !!state.tasks.digest?.running; digestButton.textContent = state.tasks.digest?.running ? "摘要生成中…" : (state.digest ? "查看摘要" : "生成摘要"); }
+    const vocabButton = panel.querySelector("#kandu-gen-vocab");
+    if (vocabButton) { vocabButton.disabled = !!state.tasks.vocab?.running; vocabButton.textContent = state.tasks.vocab?.running ? "生词表生成中…" : vocabLabel(); }
+  }
+  function vocabLabel() {
+    return vocabComplete(state.article, state.vocab) ? "生词表已完成" : (state.vocab ? "继续生成生词表" : "生成生词表");
+  }
 
   // ---------------- 正文抽取 ----------------
   function extractArticle() {
@@ -143,7 +222,7 @@
   // ---------------- 悬浮球 ----------------
   function ensurePill() {
     if (document.getElementById("kandu-pill")) return;
-    const pill = el("div", "kandu-pill", "刊读");
+    const pill = el("button", "kandu-pill", "刊读");
     pill.id = "kandu-pill";
     pill.addEventListener("click", async () => {
       try {
@@ -154,7 +233,6 @@
           article = extractArticle();
         }
         openPanel(article);
-        state.article = article;
         if (article.paragraphs.length < 2) {
           const sec = panelSection("文章摘要", "sec-digest");
           sec.appendChild(el("div", "kandu-error",
@@ -163,7 +241,7 @@
         }
         await refreshCache(article);
         // 缓存只更新结果，不重建按钮或切换用户正在查看的标签页。
-        if (state.panel && state.panel.isConnected) renderCached(article);
+        if (state.panel && state.panel.isConnected) { renderCached(article); updateProgress(); }
       } catch (e) {
         console.error("[kandu] init failed:", e);
         log("error", "面板初始化失败：" + ((e && e.stack) || e.message || e));
@@ -185,15 +263,24 @@
     if (state.panel && document.documentElement.contains(state.panel)) return state.panel;
     const panel = el("div", "kandu-panel");
     panel.id = "kandu-panel";
+    panel.setAttribute("role", "complementary");
+    panel.setAttribute("aria-label", "刊读阅读助手");
     const header = el("div", "kandu-panel-header");
-    header.appendChild(el("span", "kandu-panel-title", "刊读助手"));
-    const close = el("span", "kandu-close", "×");
+    const brand = el("div", "kandu-brand");
+    brand.appendChild(el("span", "kandu-brand-icon", "Aa"));
+    const name = el("div", "kandu-brand-name");
+    name.appendChild(el("span", "kandu-panel-title", "刊读"));
+    name.appendChild(el("span", "kandu-brand-subtitle", "陪你读懂每一篇英文"));
+    brand.appendChild(name);
+    header.appendChild(brand);
+    const close = el("button", "kandu-close", "×");
+    close.setAttribute("aria-label", "关闭侧栏");
     close.addEventListener("click", () => panel.remove());
     header.appendChild(close);
     panel.appendChild(header);
     const tabs = el("div", "kandu-tabs");
     for (const [id, label] of PANEL_SECTIONS) {
-      const t = el("span", "kandu-tab", label);
+      const t = el("button", "kandu-tab", label);
       t.dataset.sec = id;
       t.addEventListener("click", () => showSection(id));
       tabs.appendChild(t);
@@ -207,6 +294,7 @@
       sec.style.display = "none";
       body.appendChild(sec);
     }
+    panel.appendChild(el("div", "kandu-footer"));
     document.documentElement.appendChild(panel);
     state.panel = panel;
     return panel;
@@ -215,8 +303,10 @@
     const panel = ensurePanel();
     for (const sec of panel.querySelectorAll(".kandu-section"))
       sec.style.display = sec.id === id ? "block" : "none";
-    for (const t of panel.querySelectorAll(".kandu-tab"))
+    for (const t of panel.querySelectorAll(".kandu-tab")) {
       t.classList.toggle("kandu-tab-active", t.dataset.sec === id);
+      t.setAttribute("aria-pressed", String(t.dataset.sec === id));
+    }
   }
   function panelSection(title, id, activate = true) {
     const panel = ensurePanel();
@@ -232,20 +322,25 @@
   // ---------------- 摘要 ----------------
   async function ensureDigest(article) {
     if (state.digest) return state.digest;
+    if (state.tasks.digest?.running) { showSection("sec-digest"); return null; }
     const r = await send({ type: "getCache", url: article.url, article });
     if (r.digest) { state.digest = r.digest; return r.digest; }
-    const sec = panelSection("文章摘要", "sec-digest");
-    sec.appendChild(el("div", "kandu-loading", "摘要生成中…（首次约十几秒，结果缓存）"));
-    const rr = await send({ type: "genDigest", article });
-    if (!rr.ok) { clearEl(sec); sec.appendChild(el("div", "kandu-error", "失败：" + rr.error)); throw new Error(rr.error); }
-    state.digest = rr.digest;
-    return rr.digest;
+    panelSection("文章摘要", "sec-digest");
+    const task = startTask("digest", article);
+    try {
+      const rr = await send({ type: "genDigest", article, requestId: task.requestId });
+      if (!rr.ok) throw new Error(rr.error);
+      if (state.tasks.digest !== task) return null;
+      state.digest = rr.digest;
+      return rr.digest;
+    } finally { finishTask("digest", task); }
   }
   function renderDigest(article, d, activate = true) {
     const sec = panelSection("文章摘要", "sec-digest", activate);
     sec.appendChild(el("div", "kandu-title-en", d.titleEn || article.title));
     if (d.titleZh) sec.appendChild(el("div", "kandu-title-zh", d.titleZh));
     if (d.summaryZh) sec.appendChild(el("div", "kandu-summary", d.summaryZh));
+    if (d.generationStats) sec.appendChild(el("div", "kandu-result-meta", `生成用时 ${(d.generationStats.elapsedMs / 1000).toFixed(1)} 秒 · 已保存在本地`));
   }
 
   // ---------------- 生词表 ----------------
@@ -256,19 +351,25 @@
     return null;
   }
   async function genVocab(article) {
-    const sec = panelSection("生词表", "sec-vocab");
-    sec.appendChild(el("div", "kandu-loading", "生词表生成中…（本地筛词，最多两块同时处理）"));
-    const rr = await send({ type: "genVocab", article });
-    if (!rr.ok) { clearEl(sec); sec.appendChild(el("div", "kandu-error", "失败：" + rr.error)); throw new Error(rr.error); }
-    state.vocab = rr.vocab;
-    injectBadges(article, state.vocab);
-    return state.vocab;
+    panelSection("生词表", "sec-vocab");
+    const task = startTask("vocab", article);
+    try {
+      const rr = await send({ type: "genVocab", article, requestId: task.requestId });
+      if (!rr.ok) throw new Error(rr.error);
+      if (state.tasks.vocab !== task) return null;
+      state.vocab = rr.vocab;
+      injectBadges(article, state.vocab);
+      return state.vocab;
+    } finally { finishTask("vocab", task); }
   }
   function renderVocabList(article, vocab, activate = true) {
+    const body = state.panel?.querySelector(".kandu-panel-body"), previousScroll = body?.scrollTop || 0;
     const sec = panelSection("生词表", "sec-vocab", activate);
     const complete = vocabComplete(article, vocab);
     const elapsed = vocab.generationStats ? ` · 本次 ${(vocab.generationStats.elapsedMs / 1000).toFixed(1)} 秒` : "";
-    sec.appendChild(el("div", "kandu-meta", (complete ? "生词表已完成" : "部分段落待生成，请在操作页继续生成") + elapsed));
+    const failed = Object.keys(vocab.chunkFailures || {}).length;
+    const coverage = `${(vocab.processedParagraphs || []).length}/${article.paragraphs.length + 1} 段（含标题）`;
+    sec.appendChild(el("div", "kandu-meta", (complete ? "生词表已完成" : `已保存 ${coverage}${failed ? " · " + failed + " 块失败待补" : ""}，可在操作页继续生成`) + elapsed));
     const te = vocab.titleEntries || [];
     if (te.length) {
       sec.appendChild(el("div", "kandu-sub", "标题生词"));
@@ -281,10 +382,12 @@
       p.entries.forEach((e) => { sec.appendChild(entryEl(e)); shown++; });
     }
     if (!shown && !te.length) sec.appendChild(el("div", "kandu-meta", complete ? "本文无生词记录" : "暂无生词结果"));
+    updateProgress();
+    if (!activate && body) body.scrollTop = previousScroll;
   }
   function vocabComplete(article, vocab) {
     const processed = new Set(vocab?.processedParagraphs || []);
-    return processed.has(-1) && article.paragraphs.every((_, i) => processed.has(i));
+    return processed.has(-1) && !!article && article.paragraphs.every((_, i) => processed.has(i));
   }
   function entryEl(e) {
     const box = el("div", "kandu-entry");
@@ -346,16 +449,24 @@
     const hit = sentenceAt(sents, paraText.indexOf(sentence.slice(0, 40)));
     const { before, after } = neighbors(sents, hit || sents[0]);
     const article = extractArticle();
+    if (state.tasks.analysis?.running && state.tasks.analysis.sentence === sentence) { showSection("sec-analysis"); return; }
     const sec = panelSection("句解", "sec-analysis");
     sec.appendChild(el("div", "kandu-src", sentence));
-    sec.appendChild(el("div", "kandu-loading", "解析中…（首次约需十几秒，结果缓存）"));
+    const task = startTask("analysis", article);
+    task.sentence = sentence;
     const r = await send({
-      type: "analyze",
+      type: "analyze", requestId: task.requestId,
       payload: { url: article.url, title: article.title, sentence, before, after },
     });
-    clearEl(sec);
-    if (!r.ok) { sec.appendChild(el("div", "kandu-error", "失败：" + r.error)); return; }
-    const a = r.analysis;
+    finishTask("analysis", task);
+    if (state.tasks.analysis !== task) return;
+    if (!r.ok) { secError("sec-analysis", new Error(r.error)); return; }
+    state.analysis = { sentence, result: r.analysis };
+    if (state.panel?.isConnected) renderAnalysis(sentence, r.analysis, false);
+  }
+  function renderAnalysis(sentence, a, activate = true) {
+    const sec = panelSection("句子讲解", "sec-analysis", activate);
+    sec.appendChild(el("div", "kandu-src", sentence));
     if (a.vocab && a.vocab.length) {
       sec.appendChild(el("div", "kandu-sub", "一、疑难词汇"));
       a.vocab.forEach((v) => {
@@ -386,8 +497,7 @@
       sec.appendChild(el("div", "kandu-sub", "参考译文"));
       sec.appendChild(el("div", "kandu-trans", a.translation));
     }
-    // sec 是内容容器，没有标签页 ID。
-    showSection("sec-analysis");
+    if (a.generationStats) sec.appendChild(el("div", "kandu-result-meta", `生成用时 ${(a.generationStats.elapsedMs / 1000).toFixed(1)} 秒 · 已保存在本地`));
   }
 
   // ---------------- 交互 ----------------
@@ -454,66 +564,107 @@
   async function refreshCache(article) {
     const r = await send({ type: "getCache", url: article.url, article });
     if (!r.ok) throw new Error(r.error);
-    state.digest = r.digest || null;
-    state.vocab = r.vocab || null;
+    if (state.article !== article) return;
+    if (!state.tasks.digest?.running) state.digest = r.digest || state.digest;
+    if (!state.tasks.vocab?.running) state.vocab = r.vocab || state.vocab;
   }
   function renderAll(article) {
-    const actions = panelSection("操作", "sec-actions", false);
+    const actions = panelSection("阅读工具", "sec-actions", false);
+    const intro = el("div", "kandu-article-card");
+    intro.appendChild(el("div", "kandu-eyebrow", "READ & UNDERSTAND"));
+    intro.appendChild(el("div", "kandu-article-title", article.title));
+    const wordCount = (article.paragraphs.join(" ").match(/[A-Za-z]+(?:['’-][A-Za-z]+)*/g) || []).length;
+    intro.appendChild(el("div", "kandu-meta", `${article.paragraphs.length} 段正文 · ${wordCount.toLocaleString()} 词 · 默认已掌握四级词汇`));
+    actions.appendChild(intro);
+    const addTool = (number, title, description, button) => {
+      const card = el("div", "kandu-tool-card");
+      card.appendChild(el("span", "kandu-tool-number", number));
+      const text = el("div", "kandu-tool-copy");
+      text.appendChild(el("div", "kandu-tool-title", title));
+      text.appendChild(el("div", "kandu-tool-desc", description));
+      card.appendChild(text); card.appendChild(button); actions.appendChild(card);
+    };
     const b1 = el("button", "kandu-btn", "生成摘要");
+    b1.id = "kandu-gen-digest";
     b1.addEventListener("click", async () => {
-      b1.disabled = true; b1.textContent = "生成中…";
-      try { renderDigest(article, await ensureDigest(article)); }
+      if (state.tasks.digest?.running) return;
+      b1.disabled = true;
+      showSection("sec-digest");
+      try { const result = await ensureDigest(article); if (result && state.panel?.isConnected) renderDigest(article, result, false); }
       catch (e) { secError("sec-digest", e); }
-      b1.disabled = false; b1.textContent = "生成摘要";
+      updateProgress();
     });
-    actions.appendChild(b1);
-    const vocabLabel = () => vocabComplete(article, state.vocab) ? "生词表已完成" : (state.vocab ? "继续生成生词表" : "生成生词表");
+    addTool("01", "先读懂大意", "中英文标题与中文摘要，快速把握文章重点。", b1);
     const b2 = el("button", "kandu-btn", vocabLabel());
+    b2.id = "kandu-gen-vocab";
     b2.addEventListener("click", async () => {
-      if (state.busy) return;
-      state.busy = true;
-      b2.disabled = true; b2.textContent = "生成中…";
+      if (state.tasks.vocab?.running) return;
+      if (vocabComplete(article, state.vocab)) { renderVocabList(article, state.vocab); return; }
       try {
         const v = await genVocab(article);
-        renderVocabList(article, v);
-        injectBadges(article, v);
+        if (v) {
+          if (state.panel?.isConnected) renderVocabList(article, v, false);
+          injectBadges(article, v);
+        }
       } catch (e) { secError("sec-vocab", e); }
-      state.busy = false;
-      b2.disabled = false; b2.textContent = vocabLabel();
+      updateProgress();
     });
-    actions.appendChild(b2);
+    addTool("02", "扫清生词障碍", "逐段整理音标、本文含义和词根，已完成的段落可先读。", b2);
     const b3 = el("button", "kandu-btn", "查看生词表");
+    b3.id = "kandu-view-vocab";
     b3.addEventListener("click", () => {
       if (state.vocab) renderVocabList(article, state.vocab);
-      else alert("先点「生成生词表」");
+      else { showSection("sec-vocab"); updateProgress(); }
     });
-    actions.appendChild(b3);
+    addTool("03", "回看与巩固", "集中浏览已生成的词条，也可点击正文中的绿色词数标记。", b3);
+    actions.appendChild(el("div", "kandu-reading-tip", "读到长难句？双击句子，或选中文字后点击「解析」，即可查看语法与译文。"));
     secError("sec-digest", null);
     secError("sec-vocab", null);
 
     renderCached(article);
+    for (const [kind, [label, id]] of Object.entries(TASKS)) {
+      if (!state.panel.querySelector("#" + id + " .kandu-section-content")) {
+        const empty = panelSection(label, id, false);
+        if (state.tasks[kind]?.running) {
+          if (state.tasks[kind].sentence) empty.appendChild(el("div", "kandu-src", state.tasks[kind].sentence));
+        } else empty.appendChild(el("div", "kandu-empty", kind === "analysis" ? "双击原文中的句子，开始精读。" : `还没有${label}，在「操作」页开始生成。`));
+      }
+      if (state.tasks[kind]?.error) secError(id, new Error(state.tasks[kind].error), false);
+    }
+    updateProgress();
   }
   function renderCached(article) {
-    const button = state.panel?.querySelector("#sec-actions button:nth-child(2)");
-    if (button && !state.busy) button.textContent = vocabComplete(article, state.vocab) ? "生词表已完成" : (state.vocab ? "继续生成生词表" : "生成生词表");
     if (state.digest) renderDigest(article, state.digest, false);
     if (state.vocab) { renderVocabList(article, state.vocab, false); injectBadges(article, state.vocab); }
+    if (state.analysis && !state.tasks.analysis?.running) renderAnalysis(state.analysis.sentence, state.analysis.result, false);
+    updateProgress();
   }
-  function secError(id, e) {
-    const panel = ensurePanel();
+  function secError(id, e, activate = true) {
+    const kind = Object.keys(TASKS).find((key) => TASKS[key][1] === id);
+    if (e && state.tasks[kind]) state.tasks[kind].error = String(e.message || e);
+    const panel = state.panel;
+    if (!panel?.isConnected) return;
     const sec = panel.querySelector("#" + id);
     if (!sec) return;
     let old = sec.querySelector(".kandu-error");
     if (old) old.remove();
     if (e) {
+      sec.querySelector(".kandu-empty")?.remove();
       const content = sec.querySelector(".kandu-section-content") ||
         panelSection(PANEL_SECTIONS.find(([sectionId]) => sectionId === id)[1], id, false);
       content.prepend(el("div", "kandu-error", "失败：" + (e.message || e)));
-      showSection(id);
+      if (activate) showSection(id);
     }
   }
 
   function openPanel(article) {
+    if (state.article && (state.article.url !== article.url || state.article.title !== article.title ||
+        JSON.stringify(state.article.paragraphs) !== JSON.stringify(article.paragraphs))) {
+      state.digest = null; state.vocab = null; state.analysis = null; state.tasks = {};
+      clearInterval(progressTimer); progressTimer = null;
+      if (state.panel) for (const [, id] of Object.values(TASKS)) clearEl(state.panel.querySelector("#" + id));
+    }
+    state.article = article;
     ensurePanel();
     showSection("sec-actions");
     renderAll(article);

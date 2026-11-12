@@ -1,145 +1,89 @@
-/* 刊读助手 · content styles */
+/* 刊读：暖白纸面与墨绿阅读工具。规则仅作用于扩展元素。 */
+#kandu-panel, #kandu-panel *, #kandu-pill, .kandu-inline-vocab, .kandu-inline-vocab * { box-sizing: border-box !important; }
 #kandu-pill {
-  position: fixed !important;
-  right: 18px !important;
-  bottom: 18px !important;
-  z-index: 2147483600 !important;
-  background: #1b4b43 !important;
-  color: #fff !important;
-  font: 600 13px/1 "Microsoft YaHei UI", sans-serif !important;
-  padding: 9px 14px !important;
-  border-radius: 20px !important;
-  cursor: pointer !important;
-  box-shadow: 0 2px 10px rgba(0,0,0,.28) !important;
-  user-select: none !important;
+  position: fixed !important; right: 20px !important; bottom: 20px !important; z-index: 2147483600 !important;
+  appearance: none !important; background: #20574e !important; color: #fffdf6 !important;
+  border: 1px solid #ffffff35 !important; border-radius: 18px 18px 5px 18px !important; padding: 13px 20px !important; margin: 0 !important;
+  font: 600 14px/1.2 "Segoe UI", "Microsoft YaHei UI", sans-serif !important; box-shadow: 0 5px 20px #173f3830 !important; cursor: pointer !important;
 }
-#kandu-pill:hover { background: #266356 !important; }
-
-.kandu-panel {
-  position: fixed !important;
-  top: 56px !important;
-  right: 16px !important;
-  bottom: 64px !important;
-  width: 420px !important;
-  z-index: 2147483599 !important;
-  background: #fff !important;
-  border-radius: 12px !important;
-  box-shadow: 0 6px 28px rgba(0,0,0,.24) !important;
-  display: flex !important;
-  flex-direction: column !important;
-  overflow: hidden !important;
-  font-family: "Microsoft YaHei UI", sans-serif !important;
+#kandu-pill:hover { background: #2c6d61 !important; }
+#kandu-panel {
+  position: fixed !important; top: 20px !important; right: 20px !important; bottom: 80px !important;
+  width: min(460px, calc(100% - 24px)) !important; z-index: 2147483599 !important;
+  background: #faf9f5 !important; color: #273d37 !important; border: 1px solid #e1e5dd !important; border-radius: 20px !important;
+  box-shadow: 0 16px 60px #193b3529, 0 2px 10px #193b3514 !important; display: flex !important; flex-direction: column !important; overflow: hidden !important;
+  text-align: left !important; text-transform: none !important; letter-spacing: normal !important;
+  font: 14px/1.7 "Segoe UI", "Microsoft YaHei UI", sans-serif !important; color-scheme: light !important; isolation: isolate !important;
 }
-.kandu-panel-header {
-  background: #1b4b43 !important;
-  color: #fff !important;
-  padding: 9px 12px !important;
-  display: flex !important;
-  justify-content: space-between !important;
-  align-items: center !important;
-  font: 600 13px "Microsoft YaHei UI", sans-serif !important;
-  flex: none !important;
+#kandu-panel button { appearance: none !important; text-transform: none !important; letter-spacing: normal !important; }
+#kandu-panel button:focus-visible, #kandu-pill:focus-visible, .kandu-badge:focus-visible { outline: 3px solid #c2944c !important; outline-offset: 3px !important; }
+.kandu-panel-header { background: #f0f3ed !important; padding: 20px 22px 17px !important; display: flex !important; align-items: center !important; justify-content: space-between !important; flex: none !important; }
+.kandu-brand { display: flex !important; gap: 12px !important; align-items: center !important; }
+.kandu-brand-icon { display: grid !important; place-items: center !important; width: 44px !important; height: 48px !important; border-radius: 7px 14px 14px 7px !important; background: #20574e !important; color: #fff8df !important; border-left: 4px solid #c6a76a !important; font: italic 24px Georgia, serif !important; }
+.kandu-brand-name { display: flex !important; flex-direction: column !important; }
+.kandu-panel-title { font: 700 22px/1.4 "Microsoft YaHei UI", sans-serif !important; color: #204e44 !important; }
+.kandu-brand-subtitle { font: 12px/1.8 "Microsoft YaHei UI", sans-serif !important; color: #738278 !important; }
+#kandu-panel .kandu-close { width: 32px !important; height: 32px !important; border: 1px solid #dce2d8 !important; border-radius: 50% !important; background: #ffffff90 !important; color: #64766a !important; font: 24px/1 sans-serif !important; padding: 0 !important; margin: 0 !important; cursor: pointer !important; }
+#kandu-panel .kandu-close:hover { background: #e0e8dd !important; }
+.kandu-tabs { display: flex !important; gap: 6px !important; padding: 10px 18px !important; border-bottom: 1px solid #e3e7de !important; flex: none !important; }
+#kandu-panel .kandu-tab { flex: 1 !important; border: 0 !important; border-radius: 9px !important; padding: 8px 0 !important; margin: 0 !important; background: transparent !important; color: #778478 !important; font: 600 13px/1.5 "Microsoft YaHei UI", sans-serif !important; cursor: pointer !important; text-align: center !important; }
+#kandu-panel .kandu-tab:hover { background: #edf1e8 !important; color: #24574b !important; }
+#kandu-panel .kandu-tab-active { background: #20574e !important; color: #fffdf6 !important; }
+.kandu-panel-body { padding: 6px 22px 22px !important; overflow: auto !important; flex: 1 !important; min-height: 0 !important; overscroll-behavior: contain !important; scrollbar-width: thin !important; scrollbar-color: #bac8ba transparent !important; }
+.kandu-section { margin: 0 !important; }
+.kandu-section-h { font: 600 12px/1.6 "Microsoft YaHei UI", sans-serif !important; color: #859080 !important; margin: 13px 0 !important; }
+.kandu-article-card { margin: 4px 0 22px !important; padding-bottom: 19px !important; border-bottom: 1px solid #e1e5da !important; }
+.kandu-eyebrow { font: 600 10px/1.6 "Segoe UI", sans-serif !important; color: #9b814b !important; letter-spacing: 2px !important; margin-bottom: 8px !important; }
+.kandu-article-title { font: 600 23px/1.3 Georgia, "Times New Roman", serif !important; color: #213f36 !important; margin-bottom: 12px !important; overflow-wrap: anywhere !important; }
+.kandu-meta, .kandu-result-meta { font: 12px/1.8 "Microsoft YaHei UI", sans-serif !important; color: #7e8a7e !important; }
+.kandu-result-meta { border-top: 1px solid #e2e7dd !important; margin-top: 22px !important; padding-top: 12px !important; }
+.kandu-tool-card { display: grid !important; grid-template-columns: 22px 1fr auto !important; align-items: start !important; gap: 0 9px !important; background: #fffefa !important; border: 1px solid #e2e7dc !important; border-radius: 13px !important; padding: 15px 13px !important; margin-bottom: 12px !important; }
+.kandu-tool-number { font: italic 18px/1.5 Georgia, serif !important; color: #aa925f !important; }
+.kandu-tool-title { font: 600 14px/1.8 "Microsoft YaHei UI", sans-serif !important; color: #2c4b3e !important; }
+.kandu-tool-desc { font: 12px/1.8 "Microsoft YaHei UI", sans-serif !important; color: #829080 !important; margin: 3px 0 0 !important; }
+#kandu-panel .kandu-btn { grid-column: 3 !important; align-self: center !important; justify-self: start !important; white-space: nowrap !important; background: #20574e !important; color: #fffdf6 !important; border: 1px solid transparent !important; border-radius: 8px !important; padding: 8px 12px !important; margin: 0 !important; font: 600 12px/1.5 "Microsoft YaHei UI", sans-serif !important; cursor: pointer !important; }
+#kandu-panel .kandu-btn:hover { background: #2d6b5e !important; }
+#kandu-panel .kandu-btn:disabled { opacity: .55 !important; cursor: wait !important; }
+.kandu-reading-tip { font: 12px/1.9 "Microsoft YaHei UI", sans-serif !important; color: #829080 !important; padding: 5px 2px !important; }
+.kandu-empty { color: #8a9589 !important; font: 13px/1.9 "Microsoft YaHei UI", sans-serif !important; padding: 32px 16px !important; text-align: center !important; border: 1px dashed #dce2d6 !important; border-radius: 13px !important; }
+.kandu-title-en { font: 600 26px/1.3 Georgia, "Times New Roman", serif !important; color: #234b3f !important; margin: 12px 0 !important; overflow-wrap: anywhere !important; }
+.kandu-title-zh { font: 600 16px/1.6 "Microsoft YaHei UI", sans-serif !important; color: #9a7b40 !important; margin: 0 0 20px !important; }
+.kandu-summary { font: 14px/2 "Microsoft YaHei UI", sans-serif !important; color: #46564b !important; padding: 19px !important; background: #f0f3ea !important; border-left: 3px solid #b9a36d !important; border-radius: 0 12px 12px 0 !important; }
+.kandu-sub { font: 600 12px/1.8 "Microsoft YaHei UI", sans-serif !important; color: #9a814e !important; margin: 24px 0 8px !important; padding-bottom: 6px !important; border-bottom: 1px solid #e1e6da !important; }
+.kandu-entry { padding: 14px 0 !important; border-bottom: 1px solid #e7e9e1 !important; }
+.kandu-entry:last-child { border-bottom: 0 !important; }
+.kandu-entry-head { display: flex !important; align-items: baseline !important; flex-wrap: wrap !important; gap: 5px 10px !important; }
+.kandu-word { font: 700 19px/1.5 Georgia, "Times New Roman", serif !important; color: #235347 !important; }
+.kandu-ph { font: 13px/1.6 "Segoe UI", "Arial Unicode MS", sans-serif !important; color: #879082 !important; }
+.kandu-pos { font: italic 12px/1.6 Georgia, serif !important; color: #8b9586 !important; }
+.kandu-tag { font: 10px/1.5 "Microsoft YaHei UI", sans-serif !important; color: #a58549 !important; background: #f2eddf !important; border-radius: 4px !important; padding: 2px 6px !important; }
+.kandu-sense { font: 13px/1.9 "Microsoft YaHei UI", sans-serif !important; color: #47574b !important; margin-top: 5px !important; }
+.kandu-intext { font: italic 13px/1.7 Georgia, "Microsoft YaHei UI", serif !important; color: #8b9485 !important; margin-top: 5px !important; }
+.kandu-root { font: 12px/1.8 "Microsoft YaHei UI", sans-serif !important; color: #7a8966 !important; margin-top: 5px !important; }
+.kandu-src { font: 18px/1.7 Georgia, "Times New Roman", serif !important; color: #264d40 !important; background: #f0f3e9 !important; padding: 17px !important; border-radius: 12px !important; margin-bottom: 18px !important; }
+.kandu-mono { font: 12px/1.8 Consolas, "Courier New", monospace !important; color: #445b4b !important; background: #f0f3ec !important; padding: 15px !important; border: 1px solid #e1e7d9 !important; border-radius: 10px !important; overflow-x: auto !important; white-space: pre !important; margin: 8px 0 !important; }
+.kandu-trans { background: #edf2e8 !important; border-left: 3px solid #75957a !important; font: 14px/1.9 "Microsoft YaHei UI", sans-serif !important; color: #36573d !important; padding: 15px !important; border-radius: 0 10px 10px 0 !important; }
+.kandu-point { margin-top: 15px !important; font: 600 13px/1.7 "Microsoft YaHei UI", sans-serif !important; color: #375444 !important; }
+.kandu-progress { border: 1px solid #d9e4d5 !important; border-radius: 12px !important; padding: 16px !important; margin: 8px 0 18px !important; background: #f0f5ec !important; }
+.kandu-progress-title { font: 600 13px/1.7 "Microsoft YaHei UI", sans-serif !important; color: #32583f !important; }
+.kandu-progress-bar { display: block !important; width: 100% !important; height: 6px !important; border: 0 !important; border-radius: 6px !important; margin: 12px 0 !important; accent-color: #538563 !important; overflow: hidden !important; }
+.kandu-progress-bar::-webkit-progress-bar { background: #dce7d6; border-radius: 6px; }
+.kandu-progress-bar::-webkit-progress-value { background: #538563; border-radius: 6px; }
+.kandu-progress-bar:indeterminate { background: repeating-linear-gradient(100deg, #c6d9bd 0%, #6e986c 35%, #c6d9bd 70%) !important; background-size: 200% 100% !important; animation: kandu-progress 2s linear infinite !important; }
+.kandu-progress-detail { font: 11px/1.9 "Microsoft YaHei UI", sans-serif !important; color: #7d8d76 !important; white-space: pre-line !important; overflow-wrap: anywhere !important; }
+.kandu-footer { flex: none !important; border-top: 1px solid #e1e6da !important; background: #f2f4ed !important; padding: 10px 18px !important; font: 11px/1.6 "Microsoft YaHei UI", sans-serif !important; color: #8b9586 !important; }
+.kandu-footer-busy { color: #3e714f !important; }
+.kandu-error { font: 12px/1.9 "Microsoft YaHei UI", sans-serif !important; color: #a44d42 !important; background: #fbefeb !important; border: 1px solid #eedad2 !important; border-radius: 10px !important; padding: 13px !important; margin-bottom: 12px !important; overflow-wrap: anywhere !important; }
+.kandu-badge { display: inline-block !important; background: #e8f0dc !important; color: #526f32 !important; border: 1px solid #c9d9b3 !important; font: 600 11px/1.6 "Microsoft YaHei UI", sans-serif !important; border-radius: 7px !important; padding: 1px 8px !important; margin-right: 8px !important; cursor: pointer !important; vertical-align: middle !important; user-select: none !important; }
+.kandu-badge:hover { background: #d7e7c5 !important; }
+.kandu-inline-vocab { background: #fafbf4 !important; color: #354b39 !important; border: 1px solid #dde5d0 !important; border-left: 3px solid #96ae76 !important; border-radius: 10px !important; padding: 10px 20px !important; margin: 14px 0 !important; }
+.kandu-selbtn { position: absolute !important; z-index: 2147483600 !important; background: #20574e !important; color: #fffdf6 !important; font: 600 12px/1.5 "Microsoft YaHei UI", sans-serif !important; border-radius: 8px !important; padding: 7px 14px !important; cursor: pointer !important; box-shadow: 0 4px 14px #173f3830 !important; user-select: none !important; }
+@keyframes kandu-progress { to { background-position: -200% 0; } }
+@media (max-width: 520px) {
+  #kandu-panel { top: 10px !important; right: 12px !important; bottom: 76px !important; }
+  .kandu-panel-header { padding: 16px !important; }
+  .kandu-panel-body { padding: 4px 16px 16px !important; }
+  .kandu-tool-card { grid-template-columns: 22px 1fr !important; }
+  #kandu-panel .kandu-btn { grid-column: 2 !important; margin-top: 9px !important; }
 }
-.kandu-close { cursor: pointer !important; font-size: 16px !important; padding: 0 4px !important; }
-.kandu-panel-body { padding: 10px 14px !important; overflow-y: auto !important; flex: 1 !important; }
-
-.kandu-section { margin-bottom: 14px !important; }
-.kandu-section-h, .kandu-sub {
-  font: 700 12px "Microsoft YaHei UI", sans-serif !important;
-  color: #7fa829 !important;
-  margin: 10px 0 4px !important;
-}
-.kandu-title-en { font: 700 14px "Microsoft YaHei UI", sans-serif !important; color: #1b4b43 !important; margin: 6px 0 2px !important; }
-.kandu-title-zh { font: 600 12px "Microsoft YaHei UI", sans-serif !important; color: #7fa829 !important; margin-bottom: 6px !important; }
-.kandu-summary { font: 12px/1.7 "Microsoft YaHei UI", sans-serif !important; color: #333 !important; }
-.kandu-loading, .kandu-meta { font: 11px "Microsoft YaHei UI", sans-serif !important; color: #8a9a94 !important; }
-.kandu-error { font: 11px "Microsoft YaHei UI", sans-serif !important; color: #b00020 !important; }
-.kandu-btn {
-  background: #1b4b43 !important;
-  color: #fff !important;
-  border: none !important;
-  border-radius: 6px !important;
-  padding: 7px 14px !important;
-  margin: 0 8px 8px 0 !important;
-  font: 600 12px "Microsoft YaHei UI", sans-serif !important;
-  cursor: pointer !important;
-}
-.kandu-btn:hover { background: #266356 !important; }
-.kandu-btn[disabled] { opacity: .55 !important; cursor: default !important; }
-
-/* 正文段落徽标与行内生词 */
-.kandu-badge {
-  display: inline-block !important;
-  background: #5f8a17 !important;
-  color: #fff !important;
-  font: 600 11px "Microsoft YaHei UI", sans-serif !important;
-  border-radius: 9px !important;
-  padding: 1px 8px !important;
-  margin-right: 8px !important;
-  cursor: pointer !important;
-  vertical-align: middle !important;
-  user-select: none !important;
-}
-.kandu-badge:hover { background: #7fa829 !important; }
-.kandu-has-badge { position: relative !important; }
-.kandu-inline-vocab {
-  background: #f4f9f1 !important;
-  border: 1px solid #d8e8cf !important;
-  border-radius: 8px !important;
-  padding: 8px 12px !important;
-  margin: 8px 0 !important;
-}
-
-/* 词条 */
-.kandu-entry { padding: 6px 0 !important; border-bottom: 1px dashed #e4e9e6 !important; }
-.kandu-entry:last-child { border-bottom: none !important; }
-.kandu-entry-head { display: flex !important; align-items: baseline !important; gap: 8px !important; flex-wrap: wrap !important; }
-.kandu-word { font: 700 13px "Microsoft YaHei UI", sans-serif !important; color: #1b4b43 !important; }
-.kandu-ph { font: 11px "Microsoft YaHei UI", sans-serif !important; color: #8a9a94 !important; }
-.kandu-pos { font: 11px "Microsoft YaHei UI", sans-serif !important; color: #7a8a86 !important; }
-.kandu-tag { font: 9px "Microsoft YaHei UI", sans-serif !important; color: #8a6d00 !important; border: 1px solid #d9c98a !important; border-radius: 4px !important; padding: 0 4px !important; }
-.kandu-sense { font: 12px/1.65 "Microsoft YaHei UI", sans-serif !important; color: #333 !important; }
-.kandu-intext { font: italic 11px "Microsoft YaHei UI", sans-serif !important; color: #8a9a94 !important; margin-top: 2px !important; }
-.kandu-root { font: 11px "Microsoft YaHei UI", sans-serif !important; color: #5c7f10 !important; margin-top: 2px !important; }
-.kandu-src { font: italic 12px "Microsoft YaHei UI", sans-serif !important; color: #667 !important; background: #f4f6f5 !important; padding: 6px 10px !important; border-radius: 6px !important; }
-.kandu-mono { font: 11px/1.5 Consolas, "Courier New", monospace !important; background: #f2f6f4 !important; padding: 8px 10px !important; border-radius: 6px !important; overflow-x: auto !important; white-space: pre !important; }
-.kandu-trans { background: #e9f4ef !important; font: 12px/1.7 "Microsoft YaHei UI", sans-serif !important; color: #244 !important; padding: 8px 10px !important; border-radius: 6px !important; }
-.kandu-point { margin-top: 6px !important; }
-
-/* 选中文本悬浮「解析」 */
-.kandu-selbtn {
-  position: absolute !important;
-  z-index: 2147483600 !important;
-  background: #7fa829 !important;
-  color: #fff !important;
-  font: 600 12px "Microsoft YaHei UI", sans-serif !important;
-  border-radius: 6px !important;
-  padding: 5px 12px !important;
-  cursor: pointer !important;
-  box-shadow: 0 2px 8px rgba(0,0,0,.25) !important;
-  user-select: none !important;
-}
-.kandu-selbtn:hover { background: #8fb92e !important; }
-
-/* 标签页导航 */
-.kandu-tabs {
-  display: flex !important;
-  background: #14403a !important;
-  flex: none !important;
-}
-.kandu-tab {
-  flex: 1 !important;
-  text-align: center !important;
-  padding: 7px 0 !important;
-  font: 600 12px 'Microsoft YaHei UI', sans-serif !important;
-  color: #b8d8cd !important;
-  cursor: pointer !important;
-  user-select: none !important;
-  border-bottom: 2px solid transparent !important;
-}
-.kandu-tab:hover { color: #fff !important; }
-.kandu-tab-active {
-  color: #fff !important;
-  border-bottom-color: #b8e62e !important;
-  background: rgba(255,255,255,.06) !important;
-}
+@media (prefers-reduced-motion: reduce) { .kandu-progress-bar:indeterminate { animation: none !important; } }

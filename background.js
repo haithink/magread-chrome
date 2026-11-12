@@ -43,8 +43,10 @@ async function getConfig() {
 }
 function rotation(cfg, config) {
   const rot = [cfg];
+  const identity = (p) => JSON.stringify([p.provider, llmEndpoint(p), (p.model || "").trim(),
+    (p.apiKey || "").trim(), thinkingMode(p)]);
   for (const p of config.llms) {
-    if (!rot.some((r) => r.name === p.name)) rot.push(p);
+    if (!rot.some((r) => identity(r) === identity(p))) rot.push(p);
   }
   return rot;
 }
@@ -65,7 +67,13 @@ function llmEndpoint(cfg) {
   if (/\/v\d+$/.test(base)) return base + "/chat/completions";
   return base + "/v1/chat/completions";
 }
-async function chatOnce(cfg, system, user, maxTokens) {
+function thinkingMode(cfg) {
+  if (["enabled", "disabled"].includes(cfg.thinkingMode)) return cfg.thinkingMode;
+  // 与桌面版一致：精读任务默认使用 DeepSeek 非思考模式。
+  return /deepseek/i.test(cfg.model || "") || /^https:\/\/api\.deepseek\.com(?:\/|$)/i.test((cfg.baseUrl || "").trim())
+    ? "disabled" : null;
+}
+async function chatOnce(cfg, system, user, maxTokens, progress = () => {}) {
   const headers = { "Content-Type": "application/json" };
   if (cfg.provider === "anthropic") {
     headers["x-api-key"] = cfg.apiKey;
@@ -82,6 +90,9 @@ async function chatOnce(cfg, system, user, maxTokens) {
              messages: [...(system ? [{ role: "system", content: system }] : []),
                         { role: "user", content: user }] };
   }
+  // DeepSeek 的 /anthropic/v1/messages 同样支持该字段，不能只给 chat/completions 传递。
+  const mode = thinkingMode(cfg);
+  if (mode) body.thinking = { type: mode };
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 120000);
   // 仅在请求期间维持 worker 活动；即使任务被中断，已完成块也已保存。
@@ -97,7 +108,8 @@ async function chatOnce(cfg, system, user, maxTokens) {
       err.status = resp.status;
       throw err;
     }
-    const result = { content: "", cut: false, reasoning: false };
+    const result = { content: "", cut: false, reasoning: false, reasoningChars: 0 };
+    let reported = 0;
     function consume(obj) {
       if (obj.error) throw new Error("接口报错：" + String(obj.error.message || obj.error).slice(0, 300));
       const c = obj.choices?.[0];
@@ -107,13 +119,21 @@ async function chatOnce(cfg, system, user, maxTokens) {
       if (Array.isArray(obj.content)) {
         result.content += obj.content.filter((b) => b.type === "text").map((b) => b.text || "").join("");
         result.reasoning ||= obj.content.some((b) => b.type === "thinking");
+        result.reasoningChars += obj.content.filter((b) => b.type === "thinking").reduce((n, b) => n + (b.thinking || "").length, 0);
       }
       const message = c?.delta || c?.message;
       result.content += message?.content || c?.text || "";
       result.reasoning ||= !!message?.reasoning_content;
+      result.reasoningChars += (message?.reasoning_content || "").length;
       if (obj.type === "content_block_delta") {
         result.content += obj.delta?.text || "";
         result.reasoning ||= !!obj.delta?.thinking;
+        result.reasoningChars += (obj.delta?.thinking || "").length;
+      }
+      const now = Date.now();
+      if (!reported || now - reported >= 250) {
+        progress({ phase: result.content ? "receiving" : (result.reasoning ? "thinking" : "waiting"), chars: result.content.length, reasoningChars: result.reasoningChars });
+        reported = now;
       }
     }
     if ((resp.headers.get("content-type") || "").includes("text/event-stream")) {
@@ -145,6 +165,7 @@ async function chatOnce(cfg, system, user, maxTokens) {
       // 部分兼容网关忽略 stream，直接使用 JSON，避免重复付费请求。
       consume(JSON.parse(await resp.text()));
     }
+    progress({ phase: "validating", chars: result.content.length, reasoningChars: result.reasoningChars });
     return result;
   } catch (e) {
     if (controller.signal.aborted) throw new Error("模型请求超时（120 秒），请重试或切换模型");
@@ -156,17 +177,21 @@ async function chatOnce(cfg, system, user, maxTokens) {
 }
 function stripThink(t) { return (t || "").replace(/<think>[\s\S]*?<\/think>/g, "").trim(); }
 
-async function chatLLM(cfg, system, user, maxTokens = 4000) {
+async function chatLLM(cfg, system, user, maxTokens = 4000, progress = () => {}) {
+  const started = Date.now();
   let budget = maxTokens;
   let rejectedAt = Infinity;
   for (let attempt = 0; attempt < 6; attempt++) {
+    const report = (p) => progress({ llm: cfg.name, model: cfg.model, thinkingMode: thinkingMode(cfg), attempt: attempt + 1, ...p });
+    report({ phase: "waiting", chars: 0 });
     let raw;
     try {
-      raw = await chatOnce(cfg, system, user, budget);
+      raw = await chatOnce(cfg, system, user, budget, report);
     } catch (e) {
       if (e.status >= 400 && e.status < 500 && isBudgetReject(e.respText) && budget > 256 && attempt < 5) {
         rejectedAt = Math.min(rejectedAt, budget);
         budget = Math.max(256, Math.floor(budget / 2));
+        report({ phase: "retrying", reason: "调整输出额度", chars: 0 });
         pushLog("warn", `额度超限，预算减半至 ${budget}：${cfg.name}`);
         continue;
       }
@@ -174,10 +199,16 @@ async function chatLLM(cfg, system, user, maxTokens = 4000) {
       throw e;
     }
     const content = stripThink(raw.content);
-    if (content && !raw.cut) return content;
+    if (content && !raw.cut) {
+      pushLog("info", `LLM 完成 [${cfg.name}] ${cfg.provider}/${cfg.model}，思考设置 ${thinkingMode(cfg) || "默认"}，${Date.now() - started} ms，正文 ${content.length} 字符，思考 ${raw.reasoningChars} 字符，请求 ${attempt + 1} 次`);
+      return content;
+    }
     if (raw.cut || (!content && raw.reasoning)) {
       const next = Math.min(budget * 2, 32768, rejectedAt - 1);
-      if (next > budget && attempt < 5) { budget = next; continue; }
+      if (next > budget && attempt < 5) {
+        report({ phase: "retrying", reason: "输出截断，增加额度重试", chars: content.length });
+        budget = next; continue;
+      }
       throw new Error("模型输出被长度截断，请切换模型后重试");
     }
     throw new Error("响应里没有内容");
@@ -261,17 +292,19 @@ const P = {
   vocabSystem: (label) =>
     "你是英语外刊精读助教。学生已掌握「" + label + "」。本地已按词表筛出候选词。" +
     "排除人名、地名、机构名和常用词，保留超纲词、术语（含缩略语），并结合正文补充词组和熟词僻义。" +
+    "专名即使标为术语也不能收录（如 Nvidia、Jensen Huang、Bloomberg、Nestlé）；只收语言学习需要的词。" +
     "每段独立收词，同词在不同段落可重复。只输出本次给出的段落，编号原样保留，-1 为标题。" +
     '只输出紧凑 JSON：{"paragraphs":[{"index":0,"entries":[["原形小写","词性","本文中文义项","词根词源",false,"音标"]]}]}。' +
     "词条数组固定为以上六列，术语列为布尔值。释义≤25字，熟词僻义写「常见义X；本文义Y」；" +
-    "词根词源≤25字，无可靠依据留空。有本地音标的词音标列填空串，其他词必须给美式音标。" +
+    "词根词源≤25字，无可靠依据留空。每个词的第六列必须给出美式音标，不能留空；不新增其他列。" +
+    '例如 [["honeypot","n.","诱捕陷阱","honey+pot",true,"ˈhʌnipɑːt"]]，词条只能六列，不额外插入布尔值。' +
     "无生词的段落也返回空 entries。不输出 startWords、inText、titleEntries 或额外解释，这些由本地程序处理。不要展示思考过程。",
-  vocabUser: (title, chunk, cand, localPhonetics) => {
+  vocabUser: (title, chunk, cand) => {
     let out = `文章标题：${title.slice(0, 80)}。以下为本次待处理段落（-1 为标题），编号原样保留：\n`;
     for (const [index, text] of chunk) {
       out += `\n### 段落 ${index}\n${text}\n本地候选：${cand[index].join(", ") || "无；仍需检查熟词僻义和词组"}\n`;
     }
-    if (localPhonetics.length) out += "这些词已有本地音标，勿重复生成：" + localPhonetics.join(", ");
+    out += "\n输出前检查：每个词条恰好六列，最后一列是非空音标；不要把专有人名或机构名放入词表。";
     return out;
   },
   analysisSystem: () =>
@@ -354,31 +387,13 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           break;
         }
         case "genDigest": {
-          const a = msg.article;
-          const h = urlHash(a.url);
-          const got = await stGet(["digest_" + h]);
-          if (currentCache(got["digest_" + h], a)) { sendResponse({ ok: true, digest: got["digest_" + h], cached: true }); break; }
-          const cfg = await defaultCfg();
-          const text = a.paragraphs.join("\n").slice(0, 6000);
-          const raw = await chatLLM(cfg, P.digestSystem(),
-            `文章标题：${a.title}\n\n正文：\n${text}`, 4000);
-          const obj = parseJsonLoose(raw, false);
-          const digest = {
-            titleEn: String(obj.titleEn || a.title),
-            titleZh: String(obj.titleZh || ""),
-            summaryZh: String(obj.summaryZh || ""),
-            ts: Date.now(),
-            contentHash: articleHash(a),
-          };
-          await stSet({ ["digest_" + h]: digest });
+          const digest = await genDigestFor(msg.article, taskReporter(msg, sender, "digest"));
           sendResponse({ ok: true, digest });
           break;
         }
         case "genVocab": {
           pushLog("info", `生词表生成开始：${msg.article.title.slice(0, 60)}`);
-          const vocab = await genVocabFor(msg.article, (p) => {
-            if (sender.tab) chrome.tabs.sendMessage(sender.tab.id, { type: "vocabProgress", url: msg.article.url, ...p }).catch(() => {});
-          });
+          const vocab = await genVocabFor(msg.article, taskReporter(msg, sender, "vocab"));
           const fc = vocab.chunkFailures ? Object.keys(vocab.chunkFailures).length : 0;
           pushLog(fc ? "warn" : "info", `生词表生成结束：段落 ${vocab.paragraphs.length}，失败块 ${fc}，${vocab.generationStats?.elapsedMs || 0} ms`);
           for (const [key, names] of Object.entries(vocab.chunkFailures || {})) {
@@ -393,8 +408,10 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           const got = await stGet(["analysis_" + h]);
           if (got["analysis_" + h]) { sendResponse({ ok: true, analysis: got["analysis_" + h], cached: true }); break; }
           const cfg = await defaultCfg();
+          const started = Date.now();
+          const report = taskReporter(msg, sender, "analysis");
           const raw = await chatLLM(cfg, P.analysisSystem(),
-            P.analysisUser(a.sentence, a.before, a.after, a.title), 6000);
+            P.analysisUser(a.sentence, a.before, a.after, a.title), 6000, report);
           const obj = parseJsonLoose(raw, false);
           const analysis = {
             vocab: Array.isArray(obj.vocab) ? obj.vocab : [],
@@ -402,6 +419,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
             grammarPoints: Array.isArray(obj.grammarPoints) ? obj.grammarPoints : [],
             context: String(obj.context || ""),
             translation: String(obj.translation || ""),
+            generationStats: { elapsedMs: Date.now() - started, outputChars: raw.length, model: cfg.model },
           };
           await stSet({ ["analysis_" + h]: analysis });
           sendResponse({ ok: true, analysis });
@@ -425,6 +443,16 @@ function hashStr(s) {
 function articleHash(article) { return hashStr(JSON.stringify([article.title, article.paragraphs])); }
 function currentCache(cache, article) {
   return cache && (!article || !cache.contentHash || cache.contentHash === articleHash(article)) ? cache : null;
+}
+function taskReporter(msg, sender, task) {
+  return (p) => {
+    if (!sender.tab) return;
+    chrome.tabs.sendMessage(sender.tab.id, {
+      ...p, type: "generationProgress", task, requestId: msg.requestId,
+      url: msg.article?.url || msg.payload?.url,
+      contentHash: msg.article ? articleHash(msg.article) : undefined,
+    }, { frameId: sender.frameId || 0 }).catch(() => {});
+  };
 }
 async function defaultCfg() {
   const c = await getConfig();
@@ -477,13 +505,61 @@ const IRREGULAR_FORMS = Object.freeze({
   bought: "buy", brought: "bring", thought: "think", found: "find", felt: "feel", left: "leave",
   said: "say", told: "tell", kept: "keep", held: "hold", knew: "know", known: "know",
   grew: "grow", grown: "grow", gave: "give", given: "give", became: "become", began: "begin", begun: "begin",
+  fell: "fall", fallen: "fall", shrank: "shrink", shrunk: "shrink", shrunken: "shrink", ran: "run",
+  flew: "fly", flown: "fly", spoke: "speak", spoken: "speak", broke: "break", broken: "break",
+  chose: "choose", chosen: "choose", rose: "rise", risen: "rise", drove: "drive", driven: "drive",
+  ate: "eat", eaten: "eat", drank: "drink", drunk: "drink", slept: "sleep", woke: "wake", woken: "wake",
+  wore: "wear", worn: "wear", tore: "tear", torn: "tear", threw: "throw", thrown: "throw",
+  drew: "draw", drawn: "draw", froze: "freeze", frozen: "freeze", hid: "hide", hidden: "hide",
+  rode: "ride", ridden: "ride", shook: "shake", shaken: "shake", stole: "steal", stolen: "steal",
+  swam: "swim", swum: "swim", sang: "sing", sung: "sing", sank: "sink", sunk: "sink",
+  caught: "catch", taught: "teach", paid: "pay", won: "win", lost: "lose", built: "build",
+  sent: "send", lent: "lend", spent: "spend", sold: "sell", stood: "stand", sat: "sit",
+  shot: "shoot", led: "lead", dealt: "deal", meant: "mean", met: "meet", understood: "understand",
+  sought: "seek", fought: "fight", laid: "lay", lay: "lie", lain: "lie", bound: "bind", hung: "hang",
   children: "child", men: "man", women: "woman", feet: "foot", teeth: "tooth", mice: "mouse",
   phenomena: "phenomenon", criteria: "criterion", analyses: "analysis", diagnoses: "diagnosis",
   hypotheses: "hypothesis", theses: "thesis", indices: "index", matrices: "matrix", fungi: "fungus", bacteria: "bacterium",
 });
 
 // ---------------- 摘要 ----------------
-// （genDigest 在消息路由里内联实现）
+const digestJobs = new Map();
+function sharedJob(jobs, key, progress, run) {
+  if (jobs.has(key)) {
+    const job = jobs.get(key);
+    job.listeners.add(progress);
+    if (job.last) progress(job.last);
+    return job.promise;
+  }
+  const job = { listeners: new Set([progress]), last: null };
+  jobs.set(key, job);
+  job.promise = run((p) => {
+    job.last = p;
+    for (const listener of job.listeners) { try { listener(p); } catch {} }
+  }).finally(() => jobs.delete(key));
+  return job.promise;
+}
+function genDigestFor(article, progress = () => {}) {
+  return sharedJob(digestJobs, article.url + "|" + articleHash(article), progress, async (report) => {
+    const started = Date.now(), key = "digest_" + urlHash(article.url);
+    const got = await stGet([key]);
+    const cached = currentCache(got[key], article);
+    if (cached) return cached;
+    const cfg = await defaultCfg();
+    const text = article.paragraphs.join("\n").slice(0, 6000);
+    const raw = await chatLLM(cfg, P.digestSystem(), `文章标题：${article.title}\n\n正文：\n${text}`, 1500, report);
+    const obj = parseJsonLoose(raw, false);
+    if (!String(obj.summaryZh || "").trim()) throw new Error("模型返回的摘要为空，请重试");
+    const digest = {
+      titleEn: String(obj.titleEn || article.title), titleZh: String(obj.titleZh || ""),
+      summaryZh: String(obj.summaryZh), ts: Date.now(), contentHash: articleHash(article),
+      generationStats: { elapsedMs: Date.now() - started, outputChars: raw.length, model: cfg.model },
+    };
+    report({ phase: "saving", chars: raw.length });
+    await stSet({ [key]: digest });
+    return digest;
+  });
+}
 
 // ---------------- 生词表编排（分块 + LLM 轮换 + 续传） ----------------
 function candidates(text, dictSet) {
@@ -506,58 +582,59 @@ function vocabContext(word, text) {
   return text.slice(left, right.index + right[0].length);
 }
 
+class VocabValidationError extends Error {
+  constructor(sections, errors) {
+    super([...errors].map(([i, text]) => `段落 ${i}：${text}`).join("；").slice(0, 500));
+    this.sections = sections;
+  }
+}
 function vocabSections(obj, chunk) {
   if (!obj || !Array.isArray(obj.paragraphs)) throw new Error("生词结果缺少 paragraphs");
-  const source = new Map(chunk), result = new Map();
+  const source = new Map(chunk), result = new Map(), errors = new Map(), indices = new Set();
   let rows = obj.paragraphs;
   // 兼容旧提示词的 titleEntries 返回方式。
-  if (source.has(-1) && !rows.some((p) => Number(p.index) === -1) && Array.isArray(obj.titleEntries))
+  if (source.has(-1) && !rows.some((p) => p && Number(p.index) === -1) && Array.isArray(obj.titleEntries))
     rows = [...rows, { index: -1, entries: obj.titleEntries }];
   for (const p of rows) {
-    if (!p || !Number.isInteger(Number(p.index)) || p.index === null) throw new Error("生词段落编号无效");
+    if (!p || !Number.isInteger(Number(p.index)) || p.index === null) continue;
     const index = Number(p.index);
     if (!source.has(index)) continue;
-    if (result.has(index) || !Array.isArray(p.entries)) throw new Error("生词段落重复或缺少 entries");
-    const entries = [], seen = new Set();
-    for (const row of p.entries) {
-      if (Array.isArray(row) && row.length !== 6) throw new Error("生词数组必须包含六列");
-      const e = Array.isArray(row) ? { word: row[0], pos: row[1], sense: row[2], root: row[3], term: row[4], phonetic: row[5] } : row;
-      if (!e || typeof e.word !== "string" || typeof e.sense !== "string" || !e.word.trim() || !e.sense.trim())
-        throw new Error("生词缺少单词或本文释义");
-      const word = e.word.trim().toLowerCase(), sense = e.sense.trim();
-      const inText = vocabContext(word, source.get(index));
-      // 生词须能对应原文；不把模型幻觉写入已完成缓存。
-      if (!inText) throw new Error(`生词未匹配原文：${word}`);
-      const phonetic = cet4Phonetics.get(word) || String(e.phonetic || "").trim();
-      if (!phonetic) throw new Error(`生词缺少音标：${word}`);
-      const key = word + "|" + sense;
-      if (seen.has(key)) continue;
-      seen.add(key);
-      entries.push({ word, pos: String(e.pos || "").trim(), sense, phonetic, inText,
-        root: String(e.root || "").trim(), term: e.term === true });
+    if (indices.has(index)) {
+      result.delete(index); errors.set(index, "生词段落重复"); continue;
     }
-    result.set(index, { index, startWords: source.get(index).split(/\s+/).slice(0, 6).join(" "), entries });
+    indices.add(index);
+    try {
+      if (!Array.isArray(p.entries)) throw new Error("缺少 entries");
+      const entries = [], seen = new Set();
+      for (const row of p.entries) {
+        if (Array.isArray(row) && row.length !== 6) throw new Error("生词数组必须包含六列");
+        const e = Array.isArray(row) ? { word: row[0], pos: row[1], sense: row[2], root: row[3], term: row[4], phonetic: row[5] } : row;
+        if (!e || typeof e.word !== "string" || typeof e.sense !== "string" || !e.word.trim() || !e.sense.trim())
+          throw new Error("生词缺少单词或本文释义");
+        const word = e.word.trim().toLowerCase(), sense = e.sense.trim();
+        const inText = vocabContext(word, source.get(index));
+        // 生词须能对应原文；不把模型幻觉写入已完成缓存。
+        if (!inText) throw new Error(`生词未匹配原文：${word}`);
+        const phonetic = cet4Phonetics.get(word) || String(e.phonetic || "").trim();
+        if (!phonetic) throw new Error(`生词缺少音标：${word}`);
+        const key = word + "|" + sense;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        entries.push({ word, pos: String(e.pos || "").trim(), sense, phonetic, inText,
+          root: String(e.root || "").trim(), term: e.term === true });
+      }
+      result.set(index, { index, startWords: source.get(index).split(/\s+/).slice(0, 6).join(" "), entries });
+    } catch (e) { errors.set(index, String(e.message || e)); }
   }
-  if (result.size !== source.size) throw new Error("模型漏掉段落，保留为待重试");
+  for (const [index] of source) if (!result.has(index) && !errors.has(index)) errors.set(index, "模型漏掉段落，保留为待重试");
+  if (errors.size) throw new VocabValidationError(result, errors);
   return result;
 }
 
 const vocabJobs = new Map();
 function genVocabFor(article, progress = () => {}) {
-  const key = article.url + "|" + articleHash(article);
-  if (vocabJobs.has(key)) {
-    const job = vocabJobs.get(key);
-    job.listeners.add(progress);
-    if (job.last) progress(job.last);
-    return job.promise;
-  }
-  const job = { listeners: new Set([progress]), last: null };
-  vocabJobs.set(key, job);
-  job.promise = generateVocab(article, (p) => {
-    job.last = p;
-    for (const listener of job.listeners) { try { listener(p); } catch {} }
-  }).finally(() => { vocabJobs.delete(key); });
-  return job.promise;
+  return sharedJob(vocabJobs, article.url + "|" + articleHash(article), progress,
+    (report) => generateVocab(article, report));
 }
 
 async function generateVocab(article, progress) {
@@ -587,60 +664,76 @@ async function generateVocab(article, progress) {
   const stats = { chunks: chunks.length, requests: 0, inputChars: 0, outputChars: 0,
     workers: Math.min(2, chunks.length), elapsedMs: 0 };
   let done = 0, cursor = 0, saveQueue = Promise.resolve(), latest;
+  const active = new Map();
+  function report(extra = {}) {
+    progress({ done, total: chunks.length, completedParagraphs: processed.size,
+      totalParagraphs: units.length, failedChunks: Object.keys(chunkFailures).length,
+      elapsedMs: Date.now() - started, active: [...active.values()], ...extra });
+  }
+  report({ phase: "preparing" });
   function snapshot() {
     return { contentHash: articleHash(article), processedParagraphs: [...processed].sort((a, b) => a - b),
       chunkFailures: { ...chunkFailures }, paragraphs: [...sections.values()].sort((a, b) => a.index - b.index),
       titleEntries, generationStats: { ...stats, elapsedMs: Date.now() - started } };
   }
-  function commit(chunk, result, tried) {
+  function commit(result, remaining, tried, chunkId, finished = true) {
     const saved = saveQueue.then(async () => {
-      const key = chunk.map(([i]) => i).join(",");
       if (result) {
         for (const [i, p] of result) {
           if (i === -1) titleEntries = p.entries; else sections.set(i, p);
           processed.add(i);
         }
-      } else chunkFailures[key] = tried;
-      done++;
+      }
+      if (finished && remaining.length) chunkFailures[remaining.map(([i]) => i).join(",")] = [...tried];
+      if (finished) done++;
       latest = snapshot();
       await stSet({ [cacheKey]: latest });
-      progress({ done, total: chunks.length, llm: "", vocab: latest });
+      if (finished) active.delete(chunkId);
+      report({ phase: "processing", vocab: latest });
     });
     saveQueue = saved;
     return saved;
   }
   async function worker() {
     while (cursor < chunks.length) {
-      const chunk = chunks[cursor++], tried = [];
-      const localPhonetics = [...new Set(chunk.flatMap(([, text]) =>
-        (text.toLowerCase().match(/[a-z][a-z'-]*/g) || []).filter((w) => cet4Phonetics.has(w))))];
-      const user = P.vocabUser(article.title, chunk, cand, localPhonetics);
+      const chunkId = cursor++, chunk = chunks[chunkId], tried = [];
       const system = P.vocabSystem("大学英语四级 CET-4");
-      const count = chunk.reduce((n, [i]) => n + cand[i].length, 0);
-      const budget = Math.max(2048, Math.min(8192, 512 + count * 100));
-      let result = null;
+      const collected = new Map();
+      let remaining = [...chunk];
       for (const cfg of rot) {
-        progress({ done, total: chunks.length, llm: cfg.name });
+        const user = P.vocabUser(article.title, remaining, cand);
+        const count = remaining.reduce((n, [i]) => n + cand[i].length, 0);
+        const budget = Math.max(2048, Math.min(8192, 512 + count * 100));
+        const chunkProgress = (p) => {
+          active.set(chunkId, { chunk: chunkId + 1, ...p });
+          report({ phase: "processing" });
+        };
         stats.requests++; stats.inputChars += system.length + user.length;
+        let accepted = new Map();
         try {
-          const raw = await chatLLM(cfg, system, user, budget);
+          const raw = await chatLLM(cfg, system, user, budget, chunkProgress);
           stats.outputChars += raw.length;
           // 生词表必须完整；不能用 JSON 修补把截断段落误判为完成。
-          result = vocabSections(JSON.parse(extractJsonBlock(raw)), chunk);
-          break;
+          accepted = vocabSections(JSON.parse(extractJsonBlock(raw)), remaining);
         } catch (e) {
+          if (e instanceof VocabValidationError) accepted = e.sections;
           tried.push(cfg.name);
-          pushLog("warn", `生词块 [${chunk.map(([i]) => i)}] ${cfg.name}：${String(e.message || e).slice(0, 200)}`);
+          pushLog("warn", `生词块 [${remaining.map(([i]) => i)}] ${cfg.name}：${String(e.message || e).slice(0, 200)}`);
         }
+        for (const [i, p] of accepted) collected.set(i, p);
+        remaining = remaining.filter(([i]) => !accepted.has(i));
+        if (!remaining.length) break;
+        // 在换渠道前保存正常段落；只让剩余问题段落进入下一次请求。
+        if (accepted.size) await commit(accepted, remaining, tried, chunkId, false);
       }
-      await commit(chunk, result, tried);
+      await commit(collected, remaining, tried, chunkId);
     }
   }
   // 等待所有在途块落盘，再向调用方报告存储等异常。
   const settled = await Promise.allSettled(Array.from({ length: stats.workers }, () => worker()));
   const failed = settled.find((r) => r.status === "rejected");
   if (failed) throw failed.reason;
-  progress({ done, total: chunks.length, llm: "", finished: true });
+  report({ phase: "finished", finished: true });
   return latest;
 }
 

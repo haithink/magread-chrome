@@ -26,10 +26,10 @@ function renderList() {
     d.textContent = (p.name === defaultName ? "★ " : "　 ") + p.name + " — " + p.provider + " / " + p.model;
     if (p.name === selected) d.classList.add("sel");
     d.addEventListener("click", () => {
+      editProfile(p.name);
       [...box.children].forEach((c) => c.classList.remove("sel"));
       d.classList.add("sel");
     });
-    d.addEventListener("dblclick", () => editProfile(p.name));
     box.appendChild(d);
   });
 }
@@ -94,10 +94,13 @@ $("bSave").addEventListener("click", async () => {
   const cfg = currentFormCfg();
   if (!cfg.baseUrl || !cfg.apiKey || !cfg.model) { setStatus("URL / Key / 模型名 需填写完整", true); return; }
   // 编辑：保留原名定位；否则按名替换/新增
-  const existing = profiles.find((p) => p.name === cfg.name);
-  if (selected !== null && profiles[selected]) {
-    const oldName = profiles[selected].name;
-    profiles[selected] = cfg;
+  const editIndex = profiles.findIndex((p) => p.name === selected);
+  if (editIndex >= 0) {
+    if (profiles.some((p, i) => i !== editIndex && p.name === cfg.name)) {
+      setStatus("同名配置已存在，请使用其他名称", true); return;
+    }
+    const oldName = profiles[editIndex].name;
+    profiles[editIndex] = cfg;
     if (defaultName === oldName) defaultName = cfg.name;
   } else {
     const i = profiles.findIndex((p) => p.name === cfg.name);
@@ -125,6 +128,7 @@ $("bDel").addEventListener("click", async () => {
   if (sel < 0) { setStatus("先在列表中点选一个配置", true); return; }
   const name = profiles[sel].name;
   profiles.splice(sel, 1);
+  if (selected === name) { selected = null; fillForm({}); }
   if (defaultName === name) defaultName = profiles[0] ? profiles[0].name : "";
   await saveConfig({ llms: profiles, defaultLlm: defaultName });
   renderList();
@@ -137,6 +141,10 @@ function editProfile(name) {
   fillForm(p);
   setStatus("正在编辑「" + name + "」，保存后生效");
 }
+$("bNew").addEventListener("click", () => {
+  selected = null; fillForm({ provider: "openai" }); renderList();
+  $("fName").focus(); setStatus("填写新配置后点击「保存此配置」");
+});
 
 // cc-switch / 通用 JSON 提取（与桌面版 parse_pasted_json 同源启发式）
 function parsePasted(text) {
