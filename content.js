@@ -1,6 +1,10 @@
 // 刊读助手 · content script：正文抽取、界面注入、消息中转
 (() => {
-  if (window.__kanduLoaded) return;
+  function isWebReader() {
+    return document.documentElement?.getAttribute("data-kandu-reader") === "web";
+  }
+  // Magread Web already provides lookup and analysis. Do not add a second reader.
+  if (window.__kanduLoaded || isWebReader()) return;
   window.__kanduLoaded = true;
 
   const state = { panel: null, vocab: null, digest: null, article: null, tasks: {}, analysis: null };
@@ -445,6 +449,7 @@
 
   // ---------------- 句解 ----------------
   async function analyzeSentence(sentence, paraText, paraIdx) {
+    if (isWebReader()) return;
     const sents = splitSentences(paraText);
     const hit = sentenceAt(sents, paraText.indexOf(sentence.slice(0, 40)));
     const { before, after } = neighbors(sents, hit || sents[0]);
@@ -513,10 +518,13 @@
 
   // 双击：解析光标所在句
   document.addEventListener("dblclick", (e) => {
+    if (e.defaultPrevented || isWebReader()) return;
     const info = paraInfoFromNode(e.target);
     if (!info) return;
     const range = document.caretRangeFromPoint ? document.caretRangeFromPoint(e.clientX, e.clientY) : null;
-    if (!range || !range.startContainer) return;
+    // Another page handler may have opened a dialog before this listener runs.
+    // A caret in that dialog cannot be used to index the original paragraph.
+    if (!range?.startContainer || !info.elP.contains(range.startContainer)) return;
     // 计算点击处字符偏移（近似：把该文本节点前缀长度累计）
     let prefix = "";
     const walker = document.createTreeWalker(info.elP, NodeFilter.SHOW_TEXT);
@@ -537,7 +545,9 @@
   let selBtn = null;
   document.addEventListener("mouseup", (e) => {
     if (selBtn) { selBtn.remove(); selBtn = null; }
+    if (e.defaultPrevented || isWebReader()) return;
     setTimeout(() => {
+      if (isWebReader()) return;
       const sel = window.getSelection();
       if (!sel || sel.isCollapsed) return;
       const text = sel.toString().trim();
@@ -672,6 +682,7 @@
 
   // 启动：若本页像文章页（正文较长）则显示悬浮球
   setTimeout(() => {
+    if (isWebReader()) return;
     const a = extractArticle();
     if (a.paragraphs.length >= 2) ensurePill();
   }, 800);

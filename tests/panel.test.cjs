@@ -81,7 +81,12 @@ test('article panel in Chrome', { skip: !existsSync(chrome), timeout: 90000 }, a
   const server = http.createServer(async (req, res) => {
     if (req.method !== 'POST') {
       res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
-      res.end(article);
+      if (req.url === '/web-reader') {
+        res.end(article.replace('<!doctype html>', '<!doctype html><html data-kandu-reader="web">'));
+      } else if (req.url === '/overlay-article') {
+        res.end(article + `<dialog id="page-dialog" style="position:fixed;inset:0;margin:0;width:100vw;height:100vh;max-width:none;max-height:none"><p>A dialog now covers the original click position.</p></dialog>
+          <script>document.querySelector('article p').addEventListener('dblclick', () => document.querySelector('#page-dialog').showModal());</script>`);
+      } else res.end(article);
       return;
     }
     let body = '';
@@ -176,6 +181,41 @@ test('article panel in Chrome', { skip: !existsSync(chrome), timeout: 90000 }, a
     // Let the extension finish its asynchronous storage/cache callback.
     await pause(200);
   }
+
+  await t.test('Web reader owns its interactions and receives no extension UI or model requests', async () => {
+    const before = capturedRequests.length;
+    await page.send('Page.navigate', { url: baseUrl + '/web-reader' });
+    await until(() => page.evaluate("document.documentElement.dataset.kanduReader === 'web' && document.readyState === 'complete'"), 'Web reader not loaded');
+    await pause(1100); // Includes the extension's delayed article detection.
+    await page.evaluate(`(() => {
+      const p = document.querySelector('article p'), r = p.getBoundingClientRect();
+      const range = document.createRange(); range.selectNodeContents(p);
+      const selection = getSelection(); selection.removeAllRanges(); selection.addRange(range);
+      for (const type of ['mouseup', 'dblclick']) p.dispatchEvent(new MouseEvent(type, {
+        bubbles:true, clientX:r.left+25, clientY:r.top+15
+      }));
+    })()`);
+    await pause(100);
+    assert.equal(await page.evaluate("document.querySelector('#kandu-pill, #kandu-panel, .kandu-selbtn') === null"), true);
+    assert.equal(capturedRequests.length, before);
+  });
+
+  await t.test('a page dialog invalidating the caret cannot cause analysis of another sentence', async () => {
+    const cfg = { name:'Local test', provider:'openai', baseUrl, apiKey:'test-only', model:'mock' };
+    await worker.evaluate(`chrome.storage.local.set(${JSON.stringify({llms:[cfg], defaultLlm:cfg.name})})`);
+    await page.send('Page.navigate', { url: baseUrl + '/overlay-article' });
+    await until(() => page.evaluate("document.querySelector('#page-dialog') && document.readyState === 'complete'"), 'Overlay article not loaded');
+    await until(() => visible('#kandu-pill'), 'Ordinary article should still have extension tools');
+    const before = capturedRequests.length;
+    await page.evaluate(`(() => {
+      const p = document.querySelector('article p'), r = p.getBoundingClientRect();
+      p.dispatchEvent(new MouseEvent('dblclick', {bubbles:true, clientX:r.left+25, clientY:r.top+15}));
+    })()`);
+    assert.equal(await page.evaluate("document.querySelector('#page-dialog').open"), true);
+    await pause(200);
+    assert.equal(await page.evaluate("document.querySelector('#kandu-panel') === null"), true);
+    assert.equal(capturedRequests.length, before);
+  });
 
   await t.test('opens one panel with all three buttons and working tabs', async () => {
     await loadArticle();
