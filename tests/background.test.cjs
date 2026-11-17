@@ -18,7 +18,7 @@ function harness(respond, initial = {}, failStorage = false) {
   let listener;
   const runtime = { lastError: null, getURL: (s) => 'extension://' + s, onMessage: { addListener(fn) { listener = fn; } } };
   const context = vm.createContext({
-    Response, ReadableStream, TextDecoder, TextEncoder, AbortController, setTimeout, clearTimeout, setInterval, clearInterval,
+    Response, ReadableStream, TextDecoder, TextEncoder, AbortController, URL, setTimeout, clearTimeout, setInterval, clearInterval,
     chrome: { runtime, tabs: { async sendMessage(tabId, message, options) { messages.push({ tabId, message, options }); } }, storage: { local: {
       get(keys, callback) { setImmediate(() => callback(Object.fromEntries(keys.filter((k) => k in data).map((k) => [k, structuredClone(data[k])])))); },
       set(values, callback) {
@@ -57,6 +57,93 @@ function sse(events, fragment = 7) {
     controller.close();
   } }), { headers: { 'content-type': 'text/event-stream; charset=utf-8' } });
 }
+
+test('completed reading persists offline, retries metadata only and does not duplicate URLs', async () => {
+  let offline = true;
+  const token = 'test_sync_token_'.repeat(3);
+  const h = harness((body, number, url, options) => {
+    if (offline) throw new Error('offline');
+    assert.equal(url, 'https://web.invalid/api/reading-sync/import');
+    assert.equal(options.headers.Authorization, 'Bearer ' + token);
+    assert.equal(options.credentials, 'omit');
+    assert.equal(options.redirect, 'error');
+    assert.deepEqual(Object.keys(body.articles[0]).sort(), ['readAt','title','url','wordCount']);
+    return new Response(JSON.stringify({ accepted: body.articles.length }));
+  });
+  const popup = { url: 'extension://popup.html' };
+  const row = { ...article, wordCount: 42 };
+  let result = await h.request({ type: 'markReadingComplete', article: row });
+  assert.equal(result.ok, true);
+  assert.equal(result.configured, false);
+  assert.equal(result.pending, 1);
+  assert.equal(h.calls.length, 0);
+  result = await h.request({ type: 'saveReadingSync', server: 'https://web.invalid/', token }, popup);
+  assert.equal(result.ok, true);
+  assert.match(result.syncError, /暂时无法连接/);
+  assert.equal(result.pending, 1);
+  offline = false;
+  result = await h.request({ type: 'syncReading' }, popup);
+  assert.equal(result.pending, 0);
+  assert.equal(result.syncError, '');
+  result = await h.request({ type: 'markReadingComplete', article: row });
+  assert.equal(result.total, 1);
+  assert.equal(result.pending, 0);
+  assert.equal(h.data.completedReading.length, 1);
+  assert.equal(h.data.completedReading[0].paragraphs, undefined);
+  assert.equal(JSON.stringify(await h.request({type:'getReadingSync'})).includes(token), false);
+});
+
+test('sync configuration is restricted to settings and rejects unsafe destinations and metadata', async () => {
+  const h = harness(body => new Response(JSON.stringify({accepted:body.articles.length})));
+  const token = 'test_sync_token_'.repeat(3), popup = { url: 'extension://popup.html' };
+  assert.equal((await h.request({ type:'saveReadingSync', server:'https://web.invalid', token })).ok, false);
+  for (const server of ['http://public.invalid', 'https://u:p@web.invalid', 'javascript:alert(1)', 'https://web.invalid/settings']) {
+    assert.equal((await h.request({ type:'saveReadingSync', server, token }, popup)).ok, false, server);
+  }
+  for (const row of [{url:'javascript:alert(1)',title:'Article',wordCount:12},
+    {url:article.url,title:'Article',wordCount:-1}]) {
+    assert.equal((await h.request({ type:'markReadingComplete',article:row })).ok, false);
+  }
+  assert.equal(h.calls.length, 0);
+  assert.equal((await h.request({ type:'saveReadingSync', server:'http://127.0.0.1:8766', token }, popup)).ok, true);
+  assert.equal((await h.request({ type:'disconnectReadingSync' }, popup)).ok, true);
+  assert.equal(h.calls.length, 1);
+});
+
+test('concurrent completed articles are not lost and server changes replay local history', async () => {
+  const h = harness(body => new Response(JSON.stringify({accepted:body.articles.length})));
+  await Promise.all(Array.from({length:8}, (_,i) => h.request({ type:'markReadingComplete', article:{
+    url:`https://article.invalid/${i}`, title:`Article ${i}`, wordCount:30,
+  }})));
+  assert.equal(h.data.completedReading.length, 8);
+  const popup = {url:'extension://popup.html'}, token='test_sync_token_'.repeat(3);
+  let result = await h.request({type:'saveReadingSync',server:'https://first.invalid',token},popup);
+  assert.equal(result.pending, 0);
+  result = await h.request({type:'saveReadingSync',server:'https://second.invalid',token},popup);
+  assert.equal(result.pending, 0);
+  assert.equal(h.calls.length, 2);
+  assert.equal(h.calls[1].articles.length, 8);
+});
+
+test('an article completed in another tab during sync is also uploaded before its success response', async () => {
+  let release, entered;
+  const ready=new Promise(resolve => entered=resolve);
+  const gate=new Promise(resolve => release=resolve);
+  const h=harness(async (body,number) => {
+    if(number===1){entered();await gate;}
+    return new Response(JSON.stringify({accepted:body.articles.length}));
+  }, {readingSync:{server:'https://web.invalid',token:'test_sync_token_'.repeat(3)}});
+  const first=h.request({type:'markReadingComplete',article:{...article,wordCount:40}});
+  await ready;
+  const second=h.request({type:'markReadingComplete',article:{...article,url:article.url+'/second',wordCount:50}});
+  await pause(10);
+  release();
+  const result=await second;
+  await first;
+  assert.equal(result.pending,0);
+  assert.equal(h.data.completedReading.length,2);
+  assert.equal(h.calls.length,2);
+});
 
 test('compact vocab: combined title, candidate hints, local source, repeated paragraph words, cache reuse', async () => {
   const h = harness((body) => jsonResponse(rows(body, (i) => i >= 0 ? [word] : [])));

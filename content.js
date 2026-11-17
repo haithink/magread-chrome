@@ -117,6 +117,28 @@
     bar.setAttribute("aria-label", "文章阅读位置");
     box.appendChild(bar);
     box.appendChild(el("div", "kandu-reading-detail"));
+    const complete = el('button', 'kandu-complete-reading', '标记已读 · 同步 Web');
+    const status = el('div', 'kandu-complete-status');
+    complete.type = 'button';
+    send({ type: 'getCompletedReading', url: state.article?.url || location.href }).then(result => {
+      if(result.completed) complete.textContent = '已读 ✓ · 再次同步';
+    }).catch(() => {});
+    complete.addEventListener('click', async () => {
+      complete.disabled = true; status.textContent = '正在保存阅读记录并尝试同步…';
+      try {
+        const article = state.article;
+        const result = await send({ type: 'markReadingComplete', article: {
+          title: article.title, url: article.url, wordCount: countWords(article.paragraphs.join(' ')),
+        } });
+        if (!result.ok) throw new Error(result.error || '保存未完成');
+        complete.textContent = '已读 ✓ · 再次同步';
+        status.textContent = result.syncError || (result.configured ?
+          (result.pending ? `已保存，仍有 ${result.pending} 篇待同步；可在插件设置重试。` : `已同步到 ${result.server}`) :
+          '已保存在本机。在插件设置连接 Web 后可汇总统计。');
+      } catch (error) { status.textContent = error.message; }
+      finally { complete.disabled = false; }
+    });
+    box.append(complete, status);
     box.title = "根据正文滚动位置估算；滚动侧栏不会改变阅读位置。";
     return box;
   }

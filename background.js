@@ -16,6 +16,78 @@ async function stSet(obj) {
   }));
 }
 
+// Completed reading metadata is independent of LLM configuration and caches.
+let readingQueue = Promise.resolve();
+let readingSyncFlight = null;
+function readingLock(work) {
+  const result = readingQueue.catch(() => {}).then(work);
+  readingQueue = result.catch(() => {});
+  return result;
+}
+function readingURL(value, server = false) {
+  const url = new URL(value);
+  if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password) throw new Error('请输入 HTTP / HTTPS 地址');
+  if (server && url.protocol !== 'https:' && !['localhost', '127.0.0.1', '[::1]'].includes(url.hostname) &&
+      !/^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/.test(url.hostname)) throw new Error('公网 Web 地址需要使用 HTTPS');
+  url.hash = '';
+  if (server && (url.search || url.pathname !== '/')) throw new Error('Web 地址只需填写域名或主机及端口');
+  return server ? url.origin : url.href;
+}
+async function readingStatus() {
+  const { readingSync = {}, completedReading = [] } = await stGet(['readingSync', 'completedReading']);
+  return { server: readingSync.server || '', configured: !!readingSync.token, total: completedReading.length,
+    pending: completedReading.filter(r => !r.synced).length };
+}
+async function flushReading() {
+  if (readingSyncFlight) {
+    const result = await readingSyncFlight;
+    // Another tab may have completed an article during the in-flight request.
+    if (result.configured && result.pending && !result.syncError) return flushReading();
+    return result;
+  }
+  readingSyncFlight = (async () => {
+    const { readingSync: target = {}, completedReading = [] } = await stGet(['readingSync', 'completedReading']);
+    if (!target.server || !target.token) return { ...(await readingStatus()), syncError: '' };
+    const pending = completedReading.filter(r => !r.synced);
+    let checkConnection = pending.length === 0;
+    for (let start = 0; start < pending.length || checkConnection;) {
+      checkConnection = false;
+      const batch = [];
+      let bytes = 0;
+      while (start < pending.length && batch.length < 100) {
+        const rowBytes = new TextEncoder().encode(JSON.stringify(pending[start])).length;
+        if (batch.length && bytes + rowBytes > 120 * 1024) break;
+        bytes += rowBytes; batch.push(pending[start++]);
+      }
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 12000);
+      try {
+        const response = await fetch(target.server + '/api/reading-sync/import', {
+          method: 'POST', credentials: 'omit', redirect: 'error', signal: controller.signal,
+          headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + target.token },
+          body: JSON.stringify({ articles: batch.map(({ title, url, wordCount, readAt }) => ({ title, url, wordCount, readAt })) }),
+        });
+        if (!response.ok) throw new Error([401, 403].includes(response.status) ? '同步码无效或已停用，请重新配置' : `Web 同步失败（HTTP ${response.status}）`);
+        const result = await response.json();
+        if (result.accepted !== batch.length) throw new Error('Web 返回的同步结果无效，请检查服务器版本');
+        await readingLock(async () => {
+          const current = await stGet(['readingSync', 'completedReading']);
+          if (current.readingSync?.server !== target.server || current.readingSync?.token !== target.token) return;
+          const completed = current.completedReading || [];
+          for (const row of completed) if (batch.some(b => b.url === row.url && b.readAt === row.readAt)) row.synced = true;
+          await stSet({ completedReading: completed });
+        });
+      } finally { clearTimeout(timer); }
+    }
+    return { ...(await readingStatus()), syncError: '' };
+  })().catch(async error => ({ ...(await readingStatus()), syncError:
+    /^(同步码|Web )/.test(error.message) ? error.message : '暂时无法连接 Web；记录已保存在本机，下次可重试' }));
+  try { return await readingSyncFlight; } finally { readingSyncFlight = null; }
+}
+function requireExtensionSettings(sender) {
+  if (sender.url !== chrome.runtime.getURL('popup.html')) throw new Error('请从插件设置操作');
+}
+
 // ---------------- 日志（环形，持久化） ----------------
 let logQueue = Promise.resolve();
 function pushLog(level, msg) {
@@ -330,6 +402,55 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   (async () => {
     try {
       switch (msg.type) {
+        case 'getReadingSync': {
+          sendResponse({ ok: true, ...(await readingStatus()) });
+          break;
+        }
+        case 'getCompletedReading': {
+          const { completedReading = [] } = await stGet(['completedReading']);
+          const url = readingURL(msg.url);
+          sendResponse({ ok: true, completed: completedReading.some(r => r.url === url) });
+          break;
+        }
+        case 'saveReadingSync': {
+          requireExtensionSettings(sender);
+          const server = readingURL(msg.server, true);
+          const token = String(msg.token || '').trim();
+          if (!/^[A-Za-z0-9_-]{32,128}$/.test(token)) throw new Error('请粘贴 Web 设置生成的专用阅读同步码');
+          await readingLock(async () => {
+            const { completedReading = [] } = await stGet(['completedReading']);
+            await stSet({ readingSync: { server, token }, completedReading: completedReading.map(r => ({ ...r, synced: false })) });
+          });
+          sendResponse({ ok: true, ...(await flushReading()) });
+          break;
+        }
+        case 'disconnectReadingSync': {
+          requireExtensionSettings(sender);
+          await readingLock(() => stSet({ readingSync: {} }));
+          sendResponse({ ok: true, ...(await readingStatus()) });
+          break;
+        }
+        case 'syncReading': {
+          requireExtensionSettings(sender);
+          sendResponse({ ok: true, ...(await flushReading()) });
+          break;
+        }
+        case 'markReadingComplete': {
+          const row = msg.article || {};
+          const url = readingURL(row.url);
+          if (sender.url && new URL(sender.url).origin !== new URL(url).origin) throw new Error('文章来源地址无效');
+          if (url.length > 4000 || typeof row.title !== 'string' || !row.title.trim() || row.title.length > 500 ||
+              !Number.isInteger(row.wordCount) || row.wordCount < 1 || row.wordCount > 10000000) throw new Error('文章标题或词数无效');
+          await readingLock(async () => {
+            const { completedReading = [] } = await stGet(['completedReading']);
+            const existing = completedReading.find(r => r.url === url);
+            const record = { title: row.title.trim(), url, wordCount: row.wordCount, readAt: Date.now(), synced: false };
+            if (existing) Object.assign(existing, record); else completedReading.push(record);
+            await stSet({ completedReading });
+          });
+          sendResponse({ ok: true, saved: true, ...(await flushReading()) });
+          break;
+        }
         case "getConfig": {
           const c = await getConfig();
           sendResponse({ ok: true, config: c });

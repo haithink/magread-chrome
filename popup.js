@@ -59,6 +59,27 @@ async function init() {
 }
 init();
 
+function showReadingSync(result) {
+  if (!result.ok) { $('syncStatus').textContent = result.error; return; }
+  $('syncServer').value = result.server || $('syncServer').value;
+  $('syncStatus').textContent = (result.configured ? `同步目标：${result.server}。` : '尚未连接 Web。') +
+    `本机已记录 ${result.total} 篇，待同步 ${result.pending} 篇。` + (result.syncError || '');
+}
+async function syncAction(type) {
+  const buttons = ['bSyncSave', 'bSyncNow', 'bSyncDisconnect'].map($);
+  buttons.forEach(b => b.disabled = true); $('syncStatus').textContent = '正在处理阅读同步…';
+  try {
+    const result = await chrome.runtime.sendMessage({ type, server: $('syncServer').value.trim(), token: $('syncToken').value.trim() });
+    showReadingSync(result);
+    if (result.ok) $('syncToken').value = '';
+  } catch { $('syncStatus').textContent = '同步未完成。已保存的记录可稍后重试。'; }
+  finally { buttons.forEach(b => b.disabled = false); }
+}
+$('bSyncSave').onclick = () => syncAction('saveReadingSync');
+$('bSyncNow').onclick = () => syncAction('syncReading');
+$('bSyncDisconnect').onclick = () => syncAction('disconnectReadingSync');
+chrome.runtime.sendMessage({ type: 'getReadingSync' }).then(showReadingSync).catch(() => {});
+
 $("bParse").addEventListener("click", () => {
   const text = $("fPaste").value.trim();
   const parsed = parsePasted(text);

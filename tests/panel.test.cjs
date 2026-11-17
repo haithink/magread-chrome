@@ -80,7 +80,7 @@ test('article panel in Chrome', { skip: !existsSync(chrome), timeout: 90000 }, a
     `<p>${'Further observations reveal how marine organisms adapt to changing conditions beneath the surface. '.repeat(5)} Observation ${i + 1} concludes here.</p>`
   ).join('') + '</article><footer style="height:2500px">Comments and recommendations</footer>');
   let vocabCalls = 0, digestCalls = 0, holdTask = null, releaseResponse;
-  const capturedRequests = [];
+  const capturedRequests = [], readingUploads = [];
   const server = http.createServer(async (req, res) => {
     if (req.method !== 'POST') {
       res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
@@ -103,6 +103,13 @@ test('article panel in Chrome', { skip: !existsSync(chrome), timeout: 90000 }, a
     }
     let body = '';
     for await (const chunk of req) body += chunk;
+    if(req.url === '/api/reading-sync/import') {
+      const data=JSON.parse(body);
+      readingUploads.push(data);
+      res.writeHead(200, {'Content-Type':'application/json'});
+      res.end(JSON.stringify({accepted:data.articles.length}));
+      return;
+    }
     const request = JSON.parse(body), messages = request.messages;
     capturedRequests.push(request);
     const system = request.system || messages[0].content;
@@ -507,5 +514,31 @@ test('article panel in Chrome', { skip: !existsSync(chrome), timeout: 90000 }, a
     await click('#bDel');
     await until(() => page.evaluate("document.querySelectorAll('#llmList div').length === 0"), 'Profile not deleted');
     assert.equal(await page.evaluate("document.querySelector('#fName').value"), '');
+  });
+
+  await t.test('completed articles are saved locally, paired in popup and uploaded without article body', async () => {
+    await loadArticle();
+    await click('.kandu-complete-reading');
+    await until(() => page.evaluate("document.querySelector('.kandu-complete-status').textContent.includes('已保存在本机')"), 'Local completion not saved');
+    const records = await worker.evaluate('chrome.storage.local.get(["completedReading"])');
+    assert.equal(records.completedReading.length,1);
+    assert.ok(records.completedReading[0].wordCount>50);
+    assert.equal(records.completedReading[0].paragraphs,undefined);
+    const extensionUrl=await worker.evaluate('chrome.runtime.getURL("popup.html")');
+    await page.send('Page.navigate',{url:extensionUrl});
+    await until(() => visible('#syncServer'), 'Sync settings not shown');
+    await page.evaluate(`document.querySelector('#syncServer').value=${JSON.stringify(baseUrl)};document.querySelector('#syncToken').value='test_sync_token_test_sync_token_test_sync_token'`);
+    await click('#bSyncSave');
+    await until(() => page.evaluate("document.querySelector('#syncStatus').textContent.includes('待同步 0 篇')"), 'Pair and sync failed');
+    assert.equal(readingUploads.length,1);
+    assert.equal(readingUploads[0].articles.length,1);
+    assert.deepEqual(Object.keys(readingUploads[0].articles[0]).sort(),['readAt','title','url','wordCount']);
+    assert.equal(await page.evaluate("document.querySelector('#syncToken').value"),'');
+    await loadArticle();
+    await until(() => page.evaluate("document.querySelector('.kandu-complete-reading').textContent.startsWith('已读')"), 'Completed marker not restored');
+    await click('.kandu-complete-reading');
+    await until(() => page.evaluate("document.querySelector('.kandu-complete-status').textContent.includes('已同步到')"), 'Second completion not synced');
+    assert.equal((await worker.evaluate('chrome.storage.local.get(["completedReading"])')).completedReading.length,1);
+    assert.equal(readingUploads.length,2);
   });
 });

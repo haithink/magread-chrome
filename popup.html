@@ -76,6 +76,16 @@
   <div class="status" id="status"></div>
 
   <div class="sep"></div>
+  <section aria-label="Web 阅读同步">
+    <h2>Web 阅读同步</h2>
+    <p class="hint">在 Web「设置 → Chrome 插件阅读同步」生成同步码。只上传标题、原文链接、词数和完成时间；不上传正文或 LLM 配置。</p>
+    <div class="row"><label for="syncServer">Web 地址</label><input id="syncServer" type="url" placeholder="https://read.example.com" /></div>
+    <div class="row"><label for="syncToken">专用阅读同步码</label><input id="syncToken" type="password" autocomplete="off" placeholder="粘贴 Web 设置生成的同步码" /></div>
+    <div class="btns"><button id="bSyncSave">连接并同步</button><button id="bSyncNow" class="gray">重试同步</button><button id="bSyncDisconnect" class="gray">断开连接</button></div>
+    <div class="status" id="syncStatus" role="status"></div>
+  </section>
+
+  <div class="sep"></div>
   <div class="row">
     <label>运行日志（最近 300 条）</label>
     <div class="btns">

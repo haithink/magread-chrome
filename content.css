@@ -96,3 +96,5 @@
   #kandu-panel .kandu-btn { grid-column: 2 !important; margin-top: 9px !important; }
 }
 @media (prefers-reduced-motion: reduce) { .kandu-progress-bar:indeterminate { animation: none !important; } }
+
+#kandu-panel .kandu-complete-reading{margin-top:10px;padding:7px 10px;border:1px solid #b7c7a6;border-radius:7px;background:#e9f0df;color:#315c48;font:12px "Microsoft YaHei UI",sans-serif;cursor:pointer}#kandu-panel .kandu-complete-reading:disabled{opacity:.6;cursor:wait}#kandu-panel .kandu-complete-status{margin-top:6px;font-size:11px;line-height:1.6;color:#66785f;overflow-wrap:anywhere}
