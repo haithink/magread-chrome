@@ -23,6 +23,14 @@
 .kandu-brand-name { display: flex !important; flex-direction: column !important; }
 .kandu-panel-title { font: 700 22px/1.4 "Microsoft YaHei UI", sans-serif !important; color: #204e44 !important; }
 .kandu-brand-subtitle { font: 12px/1.8 "Microsoft YaHei UI", sans-serif !important; color: #738278 !important; }
+.kandu-reading-progress { flex: none !important; padding: 11px 22px 10px !important; background: #f0f3ed !important; border-top: 1px solid #e3e8df !important; }
+.kandu-reading-row { display: flex !important; align-items: baseline !important; justify-content: space-between !important; gap: 12px !important; font: 12px/1.6 "Microsoft YaHei UI", sans-serif !important; color: #617669 !important; }
+.kandu-reading-percent { font: 600 15px/1.6 "Segoe UI", sans-serif !important; color: #20574e !important; font-variant-numeric: tabular-nums !important; }
+.kandu-reading-bar { appearance: none !important; display: block !important; width: 100% !important; height: 5px !important; margin: 5px 0 6px !important; border: 0 !important; border-radius: 5px !important; overflow: hidden !important; accent-color: #327465 !important; }
+.kandu-reading-bar::-webkit-progress-bar { background: #dce5da; border-radius: 5px; }
+.kandu-reading-bar::-webkit-progress-value { background: #327465; border-radius: 5px; }
+.kandu-reading-bar:not([value])::-webkit-progress-bar { background: #dce5da; }
+.kandu-reading-detail { font: 11px/1.7 "Microsoft YaHei UI", sans-serif !important; color: #7b887b !important; }
 #kandu-panel .kandu-close { width: 32px !important; height: 32px !important; border: 1px solid #dce2d8 !important; border-radius: 50% !important; background: #ffffff90 !important; color: #64766a !important; font: 24px/1 sans-serif !important; padding: 0 !important; margin: 0 !important; cursor: pointer !important; }
 #kandu-panel .kandu-close:hover { background: #e0e8dd !important; }
 .kandu-tabs { display: flex !important; gap: 6px !important; padding: 10px 18px !important; border-bottom: 1px solid #e3e7de !important; flex: none !important; }
@@ -82,6 +90,7 @@
 @media (max-width: 520px) {
   #kandu-panel { top: 10px !important; right: 12px !important; bottom: 76px !important; }
   .kandu-panel-header { padding: 16px !important; }
+  .kandu-reading-progress { padding: 9px 16px !important; }
   .kandu-panel-body { padding: 4px 16px 16px !important; }
   .kandu-tool-card { grid-template-columns: 22px 1fr !important; }
   #kandu-panel .kandu-btn { grid-column: 2 !important; margin-top: 9px !important; }

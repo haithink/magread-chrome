@@ -76,6 +76,9 @@ test('article panel in Chrome', { skip: !existsSync(chrome), timeout: 90000 }, a
     <article><div class="kicker">FIELD NOTES · MARINE SCIENCE</div><h1>The Ocean's Hidden Signals</h1>
     <p>Researchers discovered a remarkable phenomenon in the ocean. Their findings could transform our understanding of marine ecosystems. Beneath the surface, tiny organisms respond to changes in light and temperature, leaving traces that instruments can detect.</p>
     <p>The scientists collected evidence over several years. They hope further research will explain these extraordinary observations. By comparing measurements from different depths, the team is learning how the ocean connects living systems across vast distances.</p></article>`;
+  const longArticle = article.replace('</article>', Array.from({ length: 12 }, (_, i) =>
+    `<p>${'Further observations reveal how marine organisms adapt to changing conditions beneath the surface. '.repeat(5)} Observation ${i + 1} concludes here.</p>`
+  ).join('') + '</article><footer style="height:2500px">Comments and recommendations</footer>');
   let vocabCalls = 0, digestCalls = 0, holdTask = null, releaseResponse;
   const capturedRequests = [];
   const server = http.createServer(async (req, res) => {
@@ -86,6 +89,15 @@ test('article panel in Chrome', { skip: !existsSync(chrome), timeout: 90000 }, a
       } else if (req.url === '/overlay-article') {
         res.end(article + `<dialog id="page-dialog" style="position:fixed;inset:0;margin:0;width:100vw;height:100vh;max-width:none;max-height:none"><p>A dialog now covers the original click position.</p></dialog>
           <script>document.querySelector('article p').addEventListener('dblclick', () => document.querySelector('#page-dialog').showModal());</script>`);
+      } else if (req.url === '/long-article') {
+        res.end(longArticle);
+      } else if (req.url === '/nested-article') {
+        res.end(longArticle.replace('<article>', '<main id="article-scroll" style="height:650px;overflow:auto"><article>')
+          .replace('</article>', '</article></main>'));
+      } else if (req.url === '/structured-article') {
+        const articleBody = [...article.matchAll(/<p>(.*?)<\/p>/g)].map((m) => m[1]).join('\n\n');
+        res.end('<!doctype html><meta charset="utf-8"><title>Structured article</title><p>Please sign in to see this article.</p>' +
+          '<script type="application/ld+json">' + JSON.stringify({ '@type': 'Article', articleBody }) + '</script>');
       } else res.end(article);
       return;
     }
@@ -171,9 +183,9 @@ test('article panel in Chrome', { skip: !existsSync(chrome), timeout: 90000 }, a
     const { data } = await page.send('Page.captureScreenshot', { format: 'png' });
     await writeFile(path.join(screenshotDirectory, name + '.png'), Buffer.from(data, 'base64'));
   }
-  async function loadArticle() {
+  async function loadArticle(route = '/article') {
     await page.evaluate('window.__previousTestDocument = true');
-    await page.send('Page.navigate', { url: baseUrl + '/article' });
+    await page.send('Page.navigate', { url: baseUrl + route });
     await until(() => page.evaluate("!window.__previousTestDocument && document.readyState === 'complete'"), 'Article navigation did not finish');
     await until(() => visible('#kandu-pill'), 'Reading pill not shown');
     await click('#kandu-pill');
@@ -227,6 +239,54 @@ test('article panel in Chrome', { skip: !existsSync(chrome), timeout: 90000 }, a
     await click('[data-sec="sec-actions"]');
     assert.equal(await visible('#sec-actions button'), true);
     await screenshot('actions');
+  });
+
+  await t.test('reading position follows article paragraphs and stops at the article end before comments', async () => {
+    const before = capturedRequests.length;
+    await loadArticle('/long-article');
+    const readingPercent = () => page.evaluate("document.querySelector('.kandu-reading-bar').value");
+    assert.equal(await readingPercent(), 0);
+    const totalWords = await page.evaluate("Array.from(document.querySelectorAll('article p'), p => (p.textContent.match(/[A-Za-z]+(?:['’-][A-Za-z]+)*/g) || []).length).reduce((a,b) => a+b,0)");
+    assert.match(await page.evaluate("document.querySelector('.kandu-reading-detail').textContent"), new RegExp(totalWords.toLocaleString() + ' 词'));
+    await page.evaluate("window.scrollTo(0, document.querySelectorAll('article p')[6].getBoundingClientRect().top + scrollY - 160)");
+    await until(async () => (await readingPercent()) > 0, 'Reading position did not follow article scroll');
+    const middle = await readingPercent();
+    assert.ok(middle > 20 && middle < 90, `Unexpected middle position: ${middle}`);
+    await screenshot('reading-progress');
+    const scrollY = await page.evaluate('window.scrollY');
+    await page.evaluate("(() => { const filler=document.createElement('div'); filler.style.height='2000px'; document.querySelector('#sec-actions').append(filler); document.querySelector('.kandu-panel-body').scrollTop=500; })()");
+    await until(() => page.evaluate("document.querySelector('.kandu-panel-body').scrollTop > 0"), 'Sidebar did not scroll');
+    const point = await page.evaluate("(() => { const b=document.querySelector('.kandu-panel-body'); b.scrollTop=b.scrollHeight; const r=b.getBoundingClientRect(); return {x:r.left+r.width/2,y:r.top+r.height/2}; })()");
+    await page.send('Input.dispatchMouseEvent', { type: 'mouseWheel', ...point, deltaX: 0, deltaY: 700 });
+    await pause(150);
+    assert.equal(await page.evaluate('window.scrollY'), scrollY, 'Sidebar wheel must not scroll the article');
+    assert.equal(await readingPercent(), middle);
+    await click('.kandu-close');
+    await click('#kandu-pill');
+    await until(async () => (await readingPercent()) === middle, 'Reading position did not recover after reopening');
+    await click('[data-sec="sec-vocab"]');
+    assert.equal(await visible('.kandu-reading-progress'), true, 'Reading progress should remain visible in every tab');
+    await page.evaluate("window.scrollBy(0, document.querySelector('article p:last-child').getBoundingClientRect().bottom - innerHeight)");
+    await until(async () => (await readingPercent()) === 100, 'Visible article end should be 100%');
+    assert.equal(await page.evaluate('window.scrollY + innerHeight < document.documentElement.scrollHeight - 1000'), true);
+    await page.evaluate('window.scrollTo(0,0)');
+    await until(async () => (await readingPercent()) === 0, 'Reading position must move back when scrolling back');
+    assert.equal(capturedRequests.length, before, 'Reading progress must not call a model');
+  });
+
+  await t.test('reading position handles an independently scrolling article container', async () => {
+    await loadArticle('/nested-article');
+    assert.equal(await page.evaluate("document.querySelector('.kandu-reading-bar').value"), 0);
+    await page.evaluate("(() => { const c=document.querySelector('#article-scroll'); c.scrollTop += document.querySelector('article p:last-child').getBoundingClientRect().bottom - c.getBoundingClientRect().bottom; })()");
+    await until(() => page.evaluate("document.querySelector('.kandu-reading-bar').value === 100"), 'Container scroll did not update reading position');
+    assert.equal(await page.evaluate('window.scrollY'), 0);
+  });
+
+  await t.test('structured text without matching DOM shows word count without inventing reading progress', async () => {
+    await loadArticle('/structured-article');
+    assert.equal(await page.evaluate("document.querySelector('.kandu-reading-bar').hasAttribute('value')"), false);
+    assert.match(await page.evaluate("document.querySelector('.kandu-reading-detail').textContent"), /共 [\d,]+ 词 · 暂无法定位正文/);
+    assert.equal(await page.evaluate("document.querySelector('.kandu-reading-percent').textContent"), '—');
   });
 
   await t.test('missing LLM configuration leaves navigation and buttons usable', async () => {
@@ -284,6 +344,11 @@ test('article panel in Chrome', { skip: !existsSync(chrome), timeout: 90000 }, a
     assert.equal(vocabCalls, 1, 'badge text must not change article cache identity');
     await click('article .kandu-badge');
     assert.equal(await visible('article .kandu-inline-vocab'), true);
+    const wordCount = await page.evaluate("document.querySelector('.kandu-reading-detail').textContent.split(' · ')[0]");
+    await click('.kandu-close');
+    await click('#kandu-pill');
+    await until(() => visible('#sec-actions button'), 'Panel did not reopen with inline vocabulary');
+    assert.equal(await page.evaluate("document.querySelector('.kandu-reading-detail').textContent.split(' · ')[0]"), wordCount, 'Badges and vocabulary must not count as article words');
     await click('article .kandu-badge');
     assert.equal(await visible('article .kandu-inline-vocab'), false);
   });
@@ -419,6 +484,7 @@ test('article panel in Chrome', { skip: !existsSync(chrome), timeout: 90000 }, a
     assert.equal(bounds.scrollable, true);
     assert.equal(await visible('.kandu-close'), true);
     assert.equal(await visible('.kandu-footer'), true);
+    assert.equal(await visible('.kandu-reading-progress'), true);
     await screenshot('narrow-actions');
   });
 

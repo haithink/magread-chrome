@@ -10,6 +10,7 @@
   const state = { panel: null, vocab: null, digest: null, article: null, tasks: {}, analysis: null };
   const TASKS = { digest: ["摘要", "sec-digest"], vocab: ["生词表", "sec-vocab"], analysis: ["句解", "sec-analysis"] };
   let progressTimer = null;
+  let readingTracker = null;
 
   // 进度只更新对应请求，防止旧文章或并发句解的消息覆盖当前面板。
   chrome.runtime.onMessage.addListener((msg) => {
@@ -99,6 +100,106 @@
   }
   function vocabLabel() {
     return vocabComplete(state.article, state.vocab) ? "生词表已完成" : (state.vocab ? "继续生成生词表" : "生成生词表");
+  }
+
+  // ---------------- 阅读位置（本地计算，不调用 LLM） ----------------
+  function countWords(text) {
+    return (text.match(/[A-Za-z]+(?:['’-][A-Za-z]+)*/g) || []).length;
+  }
+  function readingCard() {
+    const box = el("div", "kandu-reading-progress");
+    const row = el("div", "kandu-reading-row");
+    row.appendChild(el("span", "kandu-reading-label", "阅读位置"));
+    row.appendChild(el("span", "kandu-reading-percent", "—"));
+    box.appendChild(row);
+    const bar = el("progress", "kandu-reading-bar");
+    bar.max = 100;
+    bar.setAttribute("aria-label", "文章阅读位置");
+    box.appendChild(bar);
+    box.appendChild(el("div", "kandu-reading-detail"));
+    box.title = "根据正文滚动位置估算；滚动侧栏不会改变阅读位置。";
+    return box;
+  }
+  function stopReadingProgress() {
+    if (!readingTracker) return;
+    cancelAnimationFrame(readingTracker.frame);
+    readingTracker.observer?.disconnect();
+    document.removeEventListener("scroll", scheduleReadingProgress, true);
+    window.removeEventListener("resize", scheduleReadingProgress);
+    readingTracker = null;
+  }
+  function scheduleReadingProgress(event) {
+    if (!readingTracker || event?.target?.closest?.("#kandu-panel, .kandu-inline-vocab")) return;
+    if (!readingTracker.frame) readingTracker.frame = requestAnimationFrame(updateReadingProgress);
+  }
+  function mapReadingParagraphs(tracker) {
+    tracker.nodes = collectArticlePs(tracker.article);
+    tracker.mappedAt = Date.now();
+    tracker.observer?.disconnect();
+    if (document.body) tracker.observer?.observe(document.body);
+    for (const node of tracker.nodes) if (node) tracker.observer?.observe(node);
+    // 某些网站在独立容器内滚动正文，进度应以该容器的可见范围计算。
+    tracker.containers = [];
+    for (let node = tracker.nodes.find(Boolean)?.parentElement;
+      node && node !== document.body && node !== document.documentElement; node = node.parentElement) {
+      if (/(auto|scroll|hidden|clip)/.test(getComputedStyle(node).overflowY)) {
+        tracker.containers.push(node);
+        tracker.observer?.observe(node);
+      }
+    }
+  }
+  function trackReading(article) {
+    if (readingTracker?.article === article) { scheduleReadingProgress(); return; }
+    stopReadingProgress();
+    const card = state.panel.querySelector(".kandu-reading-progress");
+    const weights = article.paragraphs.map(countWords);
+    readingTracker = { article, weights, total: weights.reduce((a, b) => a + b, 0), frame: 0,
+      bar: card.querySelector("progress"), percent: card.querySelector(".kandu-reading-percent"),
+      detail: card.querySelector(".kandu-reading-detail"),
+      observer: new ResizeObserver(() => scheduleReadingProgress()) };
+    mapReadingParagraphs(readingTracker);
+    document.addEventListener("scroll", scheduleReadingProgress, { capture: true, passive: true });
+    window.addEventListener("resize", scheduleReadingProgress, { passive: true });
+    updateReadingProgress();
+  }
+  function updateReadingProgress() {
+    const tracker = readingTracker;
+    if (!tracker) return;
+    tracker.frame = 0;
+    if (!state.panel?.isConnected) { stopReadingProgress(); return; }
+    // 正文重绘或延迟加载后再匹配节点；正常滚动复用节点，不扫描全页文本。
+    if (tracker.nodes.some((node) => !node?.isConnected) && Date.now() - tracker.mappedAt >= 1000)
+      mapReadingParagraphs(tracker);
+    const rects = tracker.nodes.map((node) => node?.isConnected ? node.getBoundingClientRect() : null);
+    const totalText = `共 ${tracker.total.toLocaleString()} 词`;
+    let top = 0, bottom = window.innerHeight;
+    for (const node of tracker.containers) {
+      const rect = node.getBoundingClientRect();
+      top = Math.max(top, rect.top + node.clientTop);
+      bottom = Math.min(bottom, rect.top + node.clientTop + node.clientHeight);
+    }
+    if (!rects.length || rects.some((rect) => !rect || rect.height <= 0 || rect.width <= 0) || bottom <= top) {
+      tracker.bar.removeAttribute("value");
+      tracker.bar.setAttribute("aria-valuetext", "暂无法定位正文");
+      tracker.percent.textContent = "—";
+      tracker.detail.textContent = `${totalText} · 暂无法定位正文`;
+      return;
+    }
+    const line = top + Math.min(160, (bottom - top) * 0.3);
+    let words = 0, current = rects.length;
+    for (let i = 0; i < rects.length; i++) {
+      const rect = rects[i];
+      words += tracker.weights[i] * Math.max(0, Math.min(1, (line - rect.top) / rect.height));
+      if (current === rects.length && rect.bottom > line) current = i + 1;
+    }
+    // 最后一段已经完整可见即到达文末，不要求继续滚动到评论、推荐或页脚。
+    const atEnd = rects.at(-1).bottom <= bottom + 1;
+    const percent = atEnd ? 100 : Math.min(99, Math.max(0, Math.floor(words / Math.max(1, tracker.total) * 100)));
+    if (atEnd) current = rects.length;
+    tracker.bar.value = percent;
+    tracker.bar.setAttribute("aria-valuetext", `${percent}%，第 ${current} 段，共 ${rects.length} 段，${totalText}`);
+    tracker.percent.textContent = `${percent}%`;
+    tracker.detail.textContent = `${totalText} · 第 ${current} / ${rects.length} 段`;
   }
 
   // ---------------- 正文抽取 ----------------
@@ -279,9 +380,10 @@
     header.appendChild(brand);
     const close = el("button", "kandu-close", "×");
     close.setAttribute("aria-label", "关闭侧栏");
-    close.addEventListener("click", () => panel.remove());
+    close.addEventListener("click", () => { stopReadingProgress(); panel.remove(); });
     header.appendChild(close);
     panel.appendChild(header);
+    panel.appendChild(readingCard());
     const tabs = el("div", "kandu-tabs");
     for (const [id, label] of PANEL_SECTIONS) {
       const t = el("button", "kandu-tab", label);
@@ -301,6 +403,7 @@
     panel.appendChild(el("div", "kandu-footer"));
     document.documentElement.appendChild(panel);
     state.panel = panel;
+    trackReading(state.article || extractArticle());
     return panel;
   }
   function showSection(id) {
@@ -424,13 +527,15 @@
       elP.insertBefore(badge, elP.firstChild);
       elP.classList.add("kandu-has-badge");
     }
+    scheduleReadingProgress();
   }
   function toggleInlineVocab(elP, p) {
     const next = elP.nextElementSibling;
-    if (next && next.classList && next.classList.contains("kandu-inline-vocab")) { next.remove(); return; }
+    if (next && next.classList && next.classList.contains("kandu-inline-vocab")) { next.remove(); scheduleReadingProgress(); return; }
     const box = el("div", "kandu-inline-vocab");
     p.entries.forEach((e) => box.appendChild(entryEl(e)));
     elP.insertAdjacentElement("afterend", box);
+    scheduleReadingProgress();
   }
 
   function collectArticlePs(article) {
@@ -583,7 +688,7 @@
     const intro = el("div", "kandu-article-card");
     intro.appendChild(el("div", "kandu-eyebrow", "READ & UNDERSTAND"));
     intro.appendChild(el("div", "kandu-article-title", article.title));
-    const wordCount = (article.paragraphs.join(" ").match(/[A-Za-z]+(?:['’-][A-Za-z]+)*/g) || []).length;
+    const wordCount = countWords(article.paragraphs.join(" "));
     intro.appendChild(el("div", "kandu-meta", `${article.paragraphs.length} 段正文 · ${wordCount.toLocaleString()} 词 · 默认已掌握四级词汇`));
     actions.appendChild(intro);
     const addTool = (number, title, description, button) => {
@@ -676,6 +781,7 @@
     }
     state.article = article;
     ensurePanel();
+    trackReading(article);
     showSection("sec-actions");
     renderAll(article);
   }
